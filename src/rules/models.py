@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Literal
+from typing import Literal, Optional
 from uuid import UUID
 
 from pydantic import BaseModel
@@ -16,7 +16,7 @@ class LineScore(BaseModel):
     required_qty: int
     available_qty: int
     capped_qty: int  # min(available_qty, required_qty)
-    spare_sku: str | None
+    spare_sku: Optional[str]
     is_strict_match: bool
     recommendation: Recommendation
 

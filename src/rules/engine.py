@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
+from typing import Optional
 from datetime import datetime, timezone
 from uuid import uuid4
 
@@ -19,7 +20,7 @@ _DEFAULT_THRESHOLDS = {
 class RulesEngine:
     def __init__(
         self,
-        thresholds: dict | None,
+        thresholds: Optional[dict],
         mapping_table: MappingTable,
         inventory_client: InventoryClient,
     ) -> None:
