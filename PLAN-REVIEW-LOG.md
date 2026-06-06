@@ -67,3 +67,26 @@ Findings:
 **Rejected:**
 - **Metrics: false positives / override reasons / margin impact** — Re-raised 3rd time, no new evidence. MVP cohort tracking sufficient. Post-pilot. Holding.
 - **MCP per-call revocable credentials** — Implementation detail below plan level. API-key-per-agent is MVP auth. Post-MVP hardening.
+
+## Round 4 — Codex (gpt-5.5, read-only, resumed thread)
+Codex confirmed Round 3 fixes: mapping lifecycle, duplicate line-item handling, and audit-event correlation fields materially improved.
+
+VERDICT: REVISE
+
+Findings:
+- [PLAN.md:18] Advisory-only scope contradicts "final order-conversion step always does a live reserve/lock call." Fix: explicitly assign reserve/lock to ERP/human conversion, not this tool.
+- [PLAN.md:10] Threshold gap: rules define cutoff values but not calculation model for multi-line quotes, partial fulfillment, substitutes, warehouse splits, rounding, or line-level vs. quote-level aggregation. Fix: add deterministic scoring rules and examples.
+- [PLAN.md:20] MCP security gap: API-key auth lacks scopes, expiry, rotation, revocation, least-privilege. Fix: require scoped, expiring, revocable credentials with per-call identity attribution.
+- [PLAN.md:22] Metrics gap (re-raised): tagged cohorts don't capture false positives, bad recommendations, override reasons, inventory outcome, margin impact.
+- [PLAN.md:28] Strict Match ownership remains open question not in Phase 2 exit criteria, even though it materially affects recommendation behavior.
+
+### Claude's response — what changed, what was rejected, why
+
+**Accepted:**
+1. **Reserve/lock contradiction resolved** — Tool is advisory-only. Reserve/lock is explicitly owned by ERP at human-triggered conversion. Tool does not touch it.
+2. **Deterministic scoring model** — Added line-level scoring first, then quote-level aggregation; warehouse splits counted if combined qty meets requirement; floor rounding; scoring examples required in Phase 2.
+3. **MCP scoped credentials with expiry** — Added expiry + rotation policy and sub-minute revocation requirement. Per-call short-lived credentials remain post-MVP.
+4. **Strict Match ownership as Phase 2 exit criteria** — Elevated from open risk to hard gate. Backend dev cannot start until Strict Match ownership and approval workflow are defined.
+
+**Rejected:**
+- **Metrics: false positives / margin impact** — Re-raised 4th time, no new evidence. MVP cohort tracking sufficient. Post-pilot. Final hold.
