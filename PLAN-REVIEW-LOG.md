@@ -44,3 +44,26 @@ Findings:
 
 **Rejected:**
 - **Metrics: precision/recall, override reason, financial impact** — Re-raised from Round 1 without new evidence. Holding position: tagged cohort tracking is sufficient for MVP pilot. Full metrics framework is post-pilot. Not a build blocker.
+
+## Round 3 — Codex (gpt-5.5, read-only, resumed thread)
+Note: Codex still reading local pre-pull PLAN.md. Findings assessed on merit regardless.
+
+VERDICT: REVISE
+
+Findings:
+- [PLAN.md:9] Mapping lifecycle gap: mapping approvals still lack versioning, effective dates, expiry/revalidation, supersession, rollback, and conflict resolution. Fix: define the mapping schema lifecycle before backend work starts.
+- [PLAN.md:22] Prior metrics gap remains: followed/overridden/ignored does not capture false positives, bad recommendations, override reasons, margin impact, or avoidable drop-ship outcomes. Fix: add recommendation accuracy and business-impact metrics.
+- [PLAN.md:10] Prior duplicate-line concern remains: duplicate line items are rejected even though repeated SKUs can be legitimate across quote sections or BOM components. Fix: aggregate exact duplicates or route ambiguous duplicates to Manual Review.
+- [PLAN.md:12] Prior audit-correlation gap remains: audit events still omit actor, recommendation ID/version, threshold config version, mapping-table version, and detection source. Fix: include those correlation fields in every structured event.
+- [implicit, cut off] MCP revocable credentials with per-call identity attribution.
+
+### Claude's response — what changed, what was rejected, why
+
+**Accepted:**
+1. **Duplicate line handling fixed** — Round 2 introduced a bug: blanket-rejecting duplicate lines is wrong (repeated SKUs are legitimate across quote sections and BOM components). Fixed: exact duplicates aggregate by quantity, ambiguous duplicates route to Manual Review.
+2. **Audit correlation fields** — Added actor (sales rep ID), recommendation ID/version, threshold config version, mapping table version, and detection source to every structured audit event. Essential for debugging bad recommendations.
+3. **Mapping table lifecycle** — Added versioning, effective dates, expiry/revalidation, supersession, rollback, and conflict resolution as Phase 2 requirements confirmed with Cisco vendor management before any mapping goes live.
+
+**Rejected:**
+- **Metrics: false positives / override reasons / margin impact** — Re-raised 3rd time, no new evidence. MVP cohort tracking sufficient. Post-pilot. Holding.
+- **MCP per-call revocable credentials** — Implementation detail below plan level. API-key-per-agent is MVP auth. Post-MVP hardening.
