@@ -1,7 +1,5 @@
-from __future__ import annotations
-
 from datetime import datetime
-from typing import Literal, Optional
+from typing import List, Literal, Optional
 from uuid import UUID
 
 from pydantic import BaseModel
@@ -26,7 +24,7 @@ class FulfillmentRecommendation(BaseModel):
     recommendation_id: UUID
     overall: Recommendation
     score_pct: float  # 0.0 – 1.0
-    line_scores: list[LineScore]
+    line_scores: List[LineScore]
     thresholds_version: int
     mapping_table_version: int
     generated_at: datetime
