@@ -23,3 +23,24 @@ Findings:
 **Rejected:**
 - **Role-based access controls** — Valid hardening but this is an internal MVP. RBAC is a post-MVP item; the tool is not customer-facing and operates within existing enterprise auth. Logging this as a post-MVP risk, not a plan blocker.
 - **Measurement windows / precision-recall targets** — Premature for a pilot. Tagged cohort tracking (followed/overridden/ignored) vs. 90% baseline is sufficient for MVP validation. Formal precision/recall framework belongs in a post-pilot analytics plan.
+
+## Round 2 — Codex (gpt-5.5, read-only, resumed thread)
+Note: Codex read the pre-Round-1 PLAN.md (local clone not pulled). Some findings repeat Round 1; assessed on merit regardless.
+
+VERDICT: REVISE
+
+Findings:
+- Parser edge cases remain: human confirmation does not define fail-closed handling for malformed files, non-U.S. inputs, duplicate lines, zero/negative quantities, unknown SKUs, or unsupported BOMs. Fix: add explicit parser validation rules and rejection states before rules execution.
+- Prior observability gap remains: after cut-off, the plan "logs only" but does not require reason codes, inventory snapshot, missed-window classification, or alert outcome tracking. Fix: emit structured audit events for every detected mismatch, including cut-off status and inventory state.
+- Prior QA gap remains: UAT does not explicitly cover stale cache, ERP outage, API latency, concurrent reps competing for the same inventory, or recommendation-to-order drift. Fix: add these as named Phase 4 acceptance tests.
+- Prior metrics gap remains: acceptance rate and manual touch reduction do not measure bad recommendations, false positives, override reasons, or margin/inventory outcomes. Fix: track recommendation accuracy, override reason, financial impact, and avoidable drop-ship rate.
+
+### Claude's response — what changed, what was rejected, why
+
+**Accepted:**
+1. **Parser fail-closed rules** — Added explicit rejection states for malformed files, non-U.S. inputs, duplicate lines, zero/negative quantities, unknown SKUs, and unsupported BOMs. Each rejected before rules execution with a user-visible reason. No silent pass-through.
+2. **Structured audit events** — Replaced vague "logs only" with structured audit events on every mismatch: order ID, SKUs, inventory snapshot, cut-off status, alert outcome. Both fired and suppressed alerts produce a structured record.
+3. **QA: concurrent inventory and drift** — Added concurrent rep competition (double-allocation), recommendation-to-order drift, and ERP outage/circuit-breaker behavior as named Phase 4 acceptance tests.
+
+**Rejected:**
+- **Metrics: precision/recall, override reason, financial impact** — Re-raised from Round 1 without new evidence. Holding position: tagged cohort tracking is sufficient for MVP pilot. Full metrics framework is post-pilot. Not a build blocker.
