@@ -4,6 +4,7 @@ import csv
 from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Optional
+from typing import Optional
 
 from .models import MappingEntry
 from .models import MappingTable as MappingTableModel
@@ -14,7 +15,7 @@ _DEFAULT_CSV = Path(__file__).parent.parent.parent / "data" / "mock" / "mapping_
 class MappingTable:
     """Manager for the CTO-to-spare SKU mapping table."""
 
-    def __init__(self, csv_path: str | Path | None = None) -> None:
+    def __init__(self, csv_path: Optional[Path] = None) -> None:
         self._entries: list[MappingEntry] = []
         self._version: int = 1
         self._created_at: datetime = datetime.now(timezone.utc)

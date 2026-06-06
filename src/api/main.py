@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import os
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Optional
 
 from fastapi import FastAPI, HTTPException, Header, Request, status
 from fastapi.responses import JSONResponse
@@ -137,7 +137,7 @@ def override_quote(quote_id: str, body: OverrideRequest) -> OverrideResponse:
 
 
 @app.get("/admin/thresholds", response_model=ThresholdsResponse)
-def get_thresholds(x_admin_key: str | None = Header(default=None)) -> ThresholdsResponse:
+def get_thresholds(x_admin_key: Optional[str] = Header(default=None)) -> ThresholdsResponse:
     _require_admin(x_admin_key)
     return ThresholdsResponse(thresholds=dict(_thresholds))
 
@@ -145,7 +145,7 @@ def get_thresholds(x_admin_key: str | None = Header(default=None)) -> Thresholds
 @app.put("/admin/thresholds", response_model=ThresholdsResponse)
 def put_thresholds(
     body: dict,
-    x_admin_key: str | None = Header(default=None),
+    x_admin_key: Optional[str] = Header(default=None),
 ) -> ThresholdsResponse:
     _require_admin(x_admin_key)
     global _thresholds
@@ -157,7 +157,7 @@ def put_thresholds(
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _require_admin(key: str | None) -> None:
+def _require_admin(key: Optional[str]) -> None:
     expected = os.environ.get("ADMIN_KEY", "change-me")
     if key != expected:
         raise HTTPException(

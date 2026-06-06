@@ -6,6 +6,7 @@ import time
 from abc import ABC, abstractmethod
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Optional
 
 from .models import InventoryRecord, InventoryResponse
 
@@ -28,7 +29,7 @@ class MockInventoryClient(InventoryClient):
     with all quantities set to 0 to trigger circuit-breaker behaviour.
     """
 
-    def __init__(self, json_path: str | Path | None = None) -> None:
+    def __init__(self, json_path: Optional[Path] = None) -> None:
         path = Path(json_path) if json_path else _DEFAULT_JSON
         with open(path, encoding="utf-8") as fh:
             raw: dict = json.load(fh)
