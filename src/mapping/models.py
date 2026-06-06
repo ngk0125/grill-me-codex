@@ -1,7 +1,5 @@
-from __future__ import annotations
-
 from datetime import date, datetime
-from typing import Optional
+from typing import List, Optional
 
 from pydantic import BaseModel
 
@@ -22,6 +20,6 @@ class MappingEntry(BaseModel):
 
 
 class MappingTable(BaseModel):
-    entries: list[MappingEntry]
+    entries: List[MappingEntry]
     version: int
     created_at: datetime

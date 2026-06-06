@@ -1,7 +1,5 @@
-from __future__ import annotations
-
 from datetime import datetime
-from typing import Optional
+from typing import List, Optional
 
 from pydantic import BaseModel, Field
 
@@ -19,12 +17,12 @@ class QuoteLine(BaseModel):
 class Quote(BaseModel):
     quote_id: str
     cisco_deal_id: str
-    lines: list[QuoteLine]
+    lines: List[QuoteLine]
     parsed_at: datetime
     confirmed: bool = False
 
 
 class ParseResult(BaseModel):
     quote: Quote
-    low_confidence_lines: list[int]  # indices into quote.lines
-    warnings: list[str]
+    low_confidence_lines: List[int]  # indices into quote.lines
+    warnings: List[str]
