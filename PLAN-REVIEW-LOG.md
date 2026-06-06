@@ -90,3 +90,34 @@ Findings:
 
 **Rejected:**
 - **Metrics: false positives / margin impact** — Re-raised 4th time, no new evidence. MVP cohort tracking sufficient. Post-pilot. Final hold.
+
+## Round 5 — Codex (gpt-5.5, read-only, resumed thread) — FINAL ROUND
+Codex confirmed: reserve/lock mostly clarified, deterministic scoring substantially improved, MCP scoping partially addressed, Strict Match gating added.
+
+VERDICT: REVISE
+
+Findings:
+- [PLAN.md:18] Reserve/lock contradiction: Phase 3 text correct but tradeoffs section still says "final order-conversion step always does a live reserve/lock call." Fix: update tradeoffs to say ERP performs reserve/lock at human-triggered conversion.
+- [PLAN.md:10] Scoring can still overstate availability: available qty must be capped at required qty per line before summing. Fix: sum(min(available,required))/sum(required).
+- [PLAN.md:22] Metrics gap remains: cohorts don't track false positives, override reasons, inventory outcome, avoidable drop-ship rate, margin impact.
+- [PLAN.md:28] Strict Match timing conflict: risk section says "defined in Phase 1," Phase 2 exit criteria implies Phase 2. Fix: align to one phase.
+- [PLAN.md:20] MCP long-lived bearer tokens leave MVP API keys as long-lived secrets. Fix: document compensating controls (IP allowlisting, vault storage, rotation cadence).
+
+### Claude's response — Round 5 fixes and Resolution
+
+**Accepted:**
+1. **Reserve/lock tradeoffs text fixed** — Updated to say ERP performs reserve/lock at human-triggered conversion. Tool does not call reserve/lock at any point.
+2. **Scoring formula corrected** — sum(min(available,required))/sum(required) prevents surplus on one line from inflating the overall score.
+3. **Strict Match timing aligned** — Ownership defined in Phase 1 (affects rules design); workflow confirmed in Phase 2 exit criteria. Risk section updated to remove contradiction.
+4. **MCP compensating controls documented** — Vault storage, IP allowlisting, 90-day max rotation cadence, sub-minute revocation.
+
+**Partial accept (final compromise):**
+- **Metrics** — Added override reason code capture to cohort tracking (minimum viable signal: customer preference / pricing / lead time / distrust). Full precision/recall framework remains post-pilot. Five raises is enough — this partial accept closes the loop.
+
+---
+## RESOLUTION — MAX_ROUNDS=5 reached
+
+**Outcome: Converged with one standing disagreement (metrics depth), resolved by partial accept.**
+
+The plan survived 5 rounds of adversarial Codex review. All material structural flaws were addressed. The one persistent gap (recommendation quality metrics beyond cohort tracking) was resolved with a lightweight compromise: override reason capture in MVP, full metrics framework post-pilot.
+
