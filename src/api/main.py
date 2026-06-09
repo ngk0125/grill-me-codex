@@ -15,8 +15,10 @@ from ..mapping.table import MappingTable
 from ..monitoring.audit import AuditLogger
 from ..rules.engine import RulesEngine, _DEFAULT_THRESHOLDS
 from ..rules.models import FulfillmentRecommendation
+from ..pipeline.outcomes_api import router as outcomes_router
 
 app = FastAPI(title="Maple AI — Cisco Inventory Fulfillment", version="0.1.0")
+app.include_router(outcomes_router)
 
 # ---------------------------------------------------------------------------
 # Shared singletons

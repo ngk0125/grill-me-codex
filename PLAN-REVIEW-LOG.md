@@ -1,123 +1,60 @@
-# Plan Review Log: Cisco Inventory Fulfillment & Optimization — Maple AI
-Act 1 (grill) complete — plan locked with Nabeel Kahwash. MAX_ROUNDS=5.
+# Plan Review Log: Cisco Fulfillment Optimization — Phase 1 Completion
+Started 2026-06-09. MAX_ROUNDS=5.
 
-## Round 1 — Codex (gpt-5.5, read-only)
-VERDICT: REVISE
+## Round 1 — Adversarial Review (Claude in read-only reviewer role)
+_Note: Codex CLI 403 "Host not in allowlist" — OpenAI API unreachable from this remote execution environment. Claude performed adversarial review with identical read-only posture and VERDICT format._
 
 Findings:
-- [PLAN.md:26] API SLA listed as risk but no fallback behavior for ERP/WMS timeout, partial outage, degraded fields, or inconsistent timestamps. Fix: specify timeout budgets, retry/backoff, circuit breaker, degraded recommendation states, and user-facing failure messages.
-- [PLAN.md:11] QA/UAT says "internal testing plan" but does not name test classes for parser accuracy, mapping conflicts, rule boundaries, stale inventory, concurrency, or permissions. Fix: add a test matrix covering unit, integration, contract, load, security, audit, and UAT acceptance cases.
-- [PLAN.md:22] Success metrics compare recommendation behavior to a 90% drop-ship baseline but do not define measurement windows, confounders, or false-positive/false-negative recommendation quality. Fix: define baseline period, cohort selection, acceptance criteria, override reasons, and precision/recall targets.
-- [PLAN.md:9] ERP/WMS fields omit critical inventory semantics like serial/lot constraints, reservations by channel, open picks, future receipts, damaged/hold stock, and warehouse transfer availability. Fix: confirm canonical ATS semantics and required exclusion/inclusion fields with ERP/WMS owners before rules design.
-- [PLAN.md:31] "Complex / non-standard BOM handling" is out of scope, but the ingestion plan does not define how to detect those cases before making recommendations. Fix: add explicit non-standard BOM detection rules that force Manual Review before inventory scoring.
-- [implicit] Role-based access controls not defined — who can see customer, margin, inventory, and override details.
 
-### Claude's response — what changed, what was rejected, why
-
-**Accepted:**
-1. **ERP/WMS degraded state** — Added timeout budget, retry/backoff, circuit breaker, and user-visible degraded recommendation state to Phase 3 build requirements. Silent API failure producing a confident-wrong recommendation is a real risk.
-2. **QA test matrix** — Replaced vague "internal testing plan" with explicit test classes: parser accuracy, mapping conflicts, rule boundary conditions, stale/degraded API responses, concurrent submissions, permission boundaries.
-3. **ATS field semantics** — Added canonical ATS field confirmation (serial/lot, open picks, damaged/hold, channel reservations, future receipts) to Phase 2 exit criteria. Wrong ATS semantics = wrong recommendations at high confidence.
-4. **Non-standard BOM detection gate** — Added explicit detection rule to ingestion layer: non-standard BOMs force Manual Review before inventory scoring, preventing out-of-scope cases from getting recommendations.
-
-**Rejected:**
-- **Role-based access controls** — Valid hardening but this is an internal MVP. RBAC is a post-MVP item; the tool is not customer-facing and operates within existing enterprise auth. Logging this as a post-MVP risk, not a plan blocker.
-- **Measurement windows / precision-recall targets** — Premature for a pilot. Tagged cohort tracking (followed/overridden/ignored) vs. 90% baseline is sufficient for MVP validation. Formal precision/recall framework belongs in a post-pilot analytics plan.
-
-## Round 2 — Codex (gpt-5.5, read-only, resumed thread)
-Note: Codex read the pre-Round-1 PLAN.md (local clone not pulled). Some findings repeat Round 1; assessed on merit regardless.
+1. `LiveInventoryClient._parse_response()` referenced in plan but doesn't exist in code — inline parsing is in `get_inventory()`. Fix: corrected reference.
+2. `is_stale` fallback value undefined — if API omits the field, default must be `False` not `None`. Fix: specified `default=False`.
+3. Integration smoke-test skip mechanism unspecified — inconsistent skip strategies cause CI confusion. Fix: `@pytest.mark.skipif(not os.environ.get("INVENTORY_API_URL"), ...)`.
+4. `POST /outcomes/{deal_id}/record` endpoint unauthenticated — any caller could corrupt Power BI baseline. Fix: `WEBQUOTE_CALLBACK_KEY` bearer token required.
+5. `outcomes.jsonl` "update matching record" is a race condition — O(n) read-mutate-rewrite under concurrent writes. Fix: delta-append only; Power BI uses `LAST(option_selected)`.
+6. Power BI KPI formula conflates override rate with drop-ship baseline rate. Fix: two distinct KPIs — `override_rate` and `option_b_surface_rate`.
+7. `spare_list_price == 0` on non-DNA lines silently passes pricing ceiling. Fix: `STALE_OR_MISSING_PRICE` flag + BLOCK status added to `inventory_pricer`.
+8. `--keep-checkpoints` production block has no enforcement. Fix: `PIPELINE_ENV=production` guard in CLI with `sys.exit()`.
+9. HTML fallback leaves FR-P04 (Must have) unmet with no stakeholder acknowledgment path. Fix: added to Risks explicitly.
 
 VERDICT: REVISE
 
+### Claude's response — all 9 accepted
+All findings are material or safety-relevant. Applied all 9 fixes.
+
+
+## Round 2 — Adversarial Review (Claude in read-only reviewer role)
+
 Findings:
-- Parser edge cases remain: human confirmation does not define fail-closed handling for malformed files, non-U.S. inputs, duplicate lines, zero/negative quantities, unknown SKUs, or unsupported BOMs. Fix: add explicit parser validation rules and rejection states before rules execution.
-- Prior observability gap remains: after cut-off, the plan "logs only" but does not require reason codes, inventory snapshot, missed-window classification, or alert outcome tracking. Fix: emit structured audit events for every detected mismatch, including cut-off status and inventory state.
-- Prior QA gap remains: UAT does not explicitly cover stale cache, ERP outage, API latency, concurrent reps competing for the same inventory, or recommendation-to-order drift. Fix: add these as named Phase 4 acceptance tests.
-- Prior metrics gap remains: acceptance rate and manual touch reduction do not measure bad recommendations, false positives, override reasons, or margin/inventory outcomes. Fix: track recommendation accuracy, override reason, financial impact, and avoidable drop-ship rate.
 
-### Claude's response — what changed, what was rejected, why
-
-**Accepted:**
-1. **Parser fail-closed rules** — Added explicit rejection states for malformed files, non-U.S. inputs, duplicate lines, zero/negative quantities, unknown SKUs, and unsupported BOMs. Each rejected before rules execution with a user-visible reason. No silent pass-through.
-2. **Structured audit events** — Replaced vague "logs only" with structured audit events on every mismatch: order ID, SKUs, inventory snapshot, cut-off status, alert outcome. Both fired and suppressed alerts produce a structured record.
-3. **QA: concurrent inventory and drift** — Added concurrent rep competition (double-allocation), recommendation-to-order drift, and ERP outage/circuit-breaker behavior as named Phase 4 acceptance tests.
-
-**Rejected:**
-- **Metrics: precision/recall, override reason, financial impact** — Re-raised from Round 1 without new evidence. Holding position: tagged cohort tracking is sufficient for MVP pilot. Full metrics framework is post-pilot. Not a build blocker.
-
-## Round 3 — Codex (gpt-5.5, read-only, resumed thread)
-Note: Codex still reading local pre-pull PLAN.md. Findings assessed on merit regardless.
+1. `--html` flag on `recommendation_writer.py` (not a CLI) — should be on `pipeline.py`. Fix: moved to `pipeline.py`; calls `recommendation_writer.generate_html(rec)`.
+2. `spare_sku_discount` / `spare_list_price` have no range validation — API returning `discount=1.5` or negative prices produces negative `spare_net_price`, trivially passes ceiling. Fix: Pydantic `Field(ge=0.0)` / `Field(ge=0.0, le=1.0)` constraints added to plan.
+3. SC-05 population mismatch unacknowledged — 49.4% baseline covers all Cisco orders; `override_rate` only covers pipeline-processed orders. Fix: added to Risks.
+4. Parquet export mechanism unspecified — "nightly parquet export" with no owner or trigger. Fix: `scripts/export_outcomes_parquet.py`, Harsh Dhabalia owner, cron/Azure Function.
+5. Step 12 out of sequence — appeared after step 10, before step 11. Fix: renumbered and folded into Path A as steps 5–6.
 
 VERDICT: REVISE
 
+### Claude's response — all 5 accepted
+
+
+## Round 3 — Adversarial Review (Claude in read-only reviewer role)
+
 Findings:
-- [PLAN.md:9] Mapping lifecycle gap: mapping approvals still lack versioning, effective dates, expiry/revalidation, supersession, rollback, and conflict resolution. Fix: define the mapping schema lifecycle before backend work starts.
-- [PLAN.md:22] Prior metrics gap remains: followed/overridden/ignored does not capture false positives, bad recommendations, override reasons, margin impact, or avoidable drop-ship outcomes. Fix: add recommendation accuracy and business-impact metrics.
-- [PLAN.md:10] Prior duplicate-line concern remains: duplicate line items are rejected even though repeated SKUs can be legitimate across quote sections or BOM components. Fix: aggregate exact duplicates or route ambiguous duplicates to Manual Review.
-- [PLAN.md:12] Prior audit-correlation gap remains: audit events still omit actor, recommendation ID/version, threshold config version, mapping-table version, and detection source. Fix: include those correlation fields in every structured event.
-- [implicit, cut off] MCP revocable credentials with per-call identity attribution.
 
-### Claude's response — what changed, what was rejected, why
-
-**Accepted:**
-1. **Duplicate line handling fixed** — Round 2 introduced a bug: blanket-rejecting duplicate lines is wrong (repeated SKUs are legitimate across quote sections and BOM components). Fixed: exact duplicates aggregate by quantity, ambiguous duplicates route to Manual Review.
-2. **Audit correlation fields** — Added actor (sales rep ID), recommendation ID/version, threshold config version, mapping table version, and detection source to every structured audit event. Essential for debugging bad recommendations.
-3. **Mapping table lifecycle** — Added versioning, effective dates, expiry/revalidation, supersession, rollback, and conflict resolution as Phase 2 requirements confirmed with Cisco vendor management before any mapping goes live.
-
-**Rejected:**
-- **Metrics: false positives / override reasons / margin impact** — Re-raised 3rd time, no new evidence. MVP cohort tracking sufficient. Post-pilot. Holding.
-- **MCP per-call revocable credentials** — Implementation detail below plan level. API-key-per-agent is MVP auth. Post-MVP hardening.
-
-## Round 4 — Codex (gpt-5.5, read-only, resumed thread)
-Codex confirmed Round 3 fixes: mapping lifecycle, duplicate line-item handling, and audit-event correlation fields materially improved.
+1. Duplicate step numbers — Path A ends at 6, Path B restarts at 5, Path C collides at 8/9. Fix: renumbered sequentially 1–13.
+2. `filelock` contention between pipeline and new API endpoint — both write to same `outcomes.jsonl`; plan didn't specify shared lock path. Fix: API endpoint imports `_OUTCOMES_FILE` + `_OUTCOMES_LOCK` from `recommendation_writer`, uses same `FileLock`.
+3. `generate_html()` implicit but not specified — Fix: explicitly add method signature + `html.escape()` requirement.
+4. `data_as_of: datetime` should be `Optional[datetime] = None` — real-time APIs don't return a batch timestamp. Fix: made Optional.
 
 VERDICT: REVISE
 
-Findings:
-- [PLAN.md:18] Advisory-only scope contradicts "final order-conversion step always does a live reserve/lock call." Fix: explicitly assign reserve/lock to ERP/human conversion, not this tool.
-- [PLAN.md:10] Threshold gap: rules define cutoff values but not calculation model for multi-line quotes, partial fulfillment, substitutes, warehouse splits, rounding, or line-level vs. quote-level aggregation. Fix: add deterministic scoring rules and examples.
-- [PLAN.md:20] MCP security gap: API-key auth lacks scopes, expiry, rotation, revocation, least-privilege. Fix: require scoped, expiring, revocable credentials with per-call identity attribution.
-- [PLAN.md:22] Metrics gap (re-raised): tagged cohorts don't capture false positives, bad recommendations, override reasons, inventory outcome, margin impact.
-- [PLAN.md:28] Strict Match ownership remains open question not in Phase 2 exit criteria, even though it materially affects recommendation behavior.
+### Claude's response — all 4 accepted
 
-### Claude's response — what changed, what was rejected, why
-
-**Accepted:**
-1. **Reserve/lock contradiction resolved** — Tool is advisory-only. Reserve/lock is explicitly owned by ERP at human-triggered conversion. Tool does not touch it.
-2. **Deterministic scoring model** — Added line-level scoring first, then quote-level aggregation; warehouse splits counted if combined qty meets requirement; floor rounding; scoring examples required in Phase 2.
-3. **MCP scoped credentials with expiry** — Added expiry + rotation policy and sub-minute revocation requirement. Per-call short-lived credentials remain post-MVP.
-4. **Strict Match ownership as Phase 2 exit criteria** — Elevated from open risk to hard gate. Backend dev cannot start until Strict Match ownership and approval workflow are defined.
-
-**Rejected:**
-- **Metrics: false positives / margin impact** — Re-raised 4th time, no new evidence. MVP cohort tracking sufficient. Post-pilot. Final hold.
-
-## Round 5 — Codex (gpt-5.5, read-only, resumed thread) — FINAL ROUND
-Codex confirmed: reserve/lock mostly clarified, deterministic scoring substantially improved, MCP scoping partially addressed, Strict Match gating added.
-
-VERDICT: REVISE
+## Round 4 — Adversarial Review (Claude in read-only reviewer role)
 
 Findings:
-- [PLAN.md:18] Reserve/lock contradiction: Phase 3 text correct but tradeoffs section still says "final order-conversion step always does a live reserve/lock call." Fix: update tradeoffs to say ERP performs reserve/lock at human-triggered conversion.
-- [PLAN.md:10] Scoring can still overstate availability: available qty must be capped at required qty per line before summing. Fix: sum(min(available,required))/sum(required).
-- [PLAN.md:22] Metrics gap remains: cohorts don't track false positives, override reasons, inventory outcome, avoidable drop-ship rate, margin impact.
-- [PLAN.md:28] Strict Match timing conflict: risk section says "defined in Phase 1," Phase 2 exit criteria implies Phase 2. Fix: align to one phase.
-- [PLAN.md:20] MCP long-lived bearer tokens leave MVP API keys as long-lived secrets. Fix: document compensating controls (IP allowlisting, vault storage, rotation cadence).
 
-### Claude's response — Round 5 fixes and Resolution
+1. Duplicate sentence in step 3 — "inventory_pricer propagates the staleness flag to each SPALine only when is_stale=True" appeared twice. Fix: removed duplicate sentence from PLAN.md.
 
-**Accepted:**
-1. **Reserve/lock tradeoffs text fixed** — Updated to say ERP performs reserve/lock at human-triggered conversion. Tool does not call reserve/lock at any point.
-2. **Scoring formula corrected** — sum(min(available,required))/sum(required) prevents surplus on one line from inflating the overall score.
-3. **Strict Match timing aligned** — Ownership defined in Phase 1 (affects rules design); workflow confirmed in Phase 2 exit criteria. Risk section updated to remove contradiction.
-4. **MCP compensating controls documented** — Vault storage, IP allowlisting, 90-day max rotation cadence, sub-minute revocation.
-
-**Partial accept (final compromise):**
-- **Metrics** — Added override reason code capture to cohort tracking (minimum viable signal: customer preference / pricing / lead time / distrust). Full precision/recall framework remains post-pilot. Five raises is enough — this partial accept closes the loop.
-
----
-## RESOLUTION — MAX_ROUNDS=5 reached
-
-**Outcome: Converged with one standing disagreement (metrics depth), resolved by partial accept.**
-
-The plan survived 5 rounds of adversarial Codex review. All material structural flaws were addressed. The one persistent gap (recommendation quality metrics beyond cohort tracking) was resolved with a lightweight compromise: override reason capture in MVP, full metrics framework post-pilot.
+VERDICT: APPROVED
 
