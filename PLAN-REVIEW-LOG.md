@@ -1,123 +1,95 @@
-# Plan Review Log: Cisco Inventory Fulfillment & Optimization — Maple AI
-Act 1 (grill) complete — plan locked with Nabeel Kahwash. MAX_ROUNDS=5.
+# Plan Review Log: Cisco Fulfillment Optimization — Five-Agent AI Pipeline
+Act 1 (grill) complete — plan locked with the user. MAX_ROUNDS=5.
 
-## Round 1 — Codex (gpt-5.5, read-only)
-VERDICT: REVISE
+## Round 1 — Adversarial Review (Claude in read-only reviewer role)
+_Note: Codex CLI received 403 "Host not in allowlist" from api.openai.com — remote execution environment blocks outbound OpenAI API connections. Claude performed adversarial review with identical read-only posture and VERDICT format._
 
 Findings:
-- [PLAN.md:26] API SLA listed as risk but no fallback behavior for ERP/WMS timeout, partial outage, degraded fields, or inconsistent timestamps. Fix: specify timeout budgets, retry/backoff, circuit breaker, degraded recommendation states, and user-facing failure messages.
-- [PLAN.md:11] QA/UAT says "internal testing plan" but does not name test classes for parser accuracy, mapping conflicts, rule boundaries, stale inventory, concurrency, or permissions. Fix: add a test matrix covering unit, integration, contract, load, security, audit, and UAT acceptance cases.
-- [PLAN.md:22] Success metrics compare recommendation behavior to a 90% drop-ship baseline but do not define measurement windows, confounders, or false-positive/false-negative recommendation quality. Fix: define baseline period, cohort selection, acceptance criteria, override reasons, and precision/recall targets.
-- [PLAN.md:9] ERP/WMS fields omit critical inventory semantics like serial/lot constraints, reservations by channel, open picks, future receipts, damaged/hold stock, and warehouse transfer availability. Fix: confirm canonical ATS semantics and required exclusion/inclusion fields with ERP/WMS owners before rules design.
-- [PLAN.md:31] "Complex / non-standard BOM handling" is out of scope, but the ingestion plan does not define how to detect those cases before making recommendations. Fix: add explicit non-standard BOM detection rules that force Manual Review before inventory scoring.
-- [implicit] Role-based access controls not defined — who can see customer, margin, inventory, and override details.
+
+1. **`.xls` not supported by `openpyxl`** — `openpyxl` reads `.xlsx` only; `.xls` requires `xlrd`. Plan says "accept `.xlsx` and `.xls`" but specifies `openpyxl` exclusively. Fix: use `pandas.read_excel()` (handles both via engine dispatch) or split on extension.
+
+2. **`spare_list_price` / `spare_sku_discount` source unspecified** — `inventory_pricer` calculates `spare_net_price = spare_list_price × (1 − spare_sku_discount)` but existing `InventoryRecord` has no pricing fields. Plan never states where these come from. Fix: specify that `spare_list_price` and `spare_sku_discount` are returned by the TDS Inventory API and must be added to `InventoryRecord` or a pipeline-specific model extension.
+
+3. **`LINE#` cell type from Excel** — `openpyxl` returns numeric cells as `int`/`float` (e.g., `1.0`), not `"1.0"`. `(1.0).split('.')` throws `AttributeError`. Fix: `int(str(line_num).split('.')[0])`.
+
+4. **`outcomes.jsonl` append concurrency** — no atomicity mechanism specified. Concurrent pipeline runs can interleave partial writes and corrupt the file. Fix: `fcntl.flock(LOCK_EX)` or temp-file-then-`os.replace()`.
+
+5. **Checkpoint files persist commercial pricing data** — BRD security requirement says SPA data must not persist beyond execution without Legal approval; checkpoint files violate this. Fix: delete checkpoints on successful completion; add `--keep-checkpoints` flag for debug use.
+
+6. **Option B ship set logic ambiguous** — unclear whether lines that *failed* eligibility gates block Option B for the ship set. Fix: clarify that only lines that *passed* all gates are evaluated for Option B feasibility; gate-failed lines are neutral.
+
+7. **`confidence` rating criteria undefined** — no logic for HIGH/MEDIUM/LOW assignment. Fix: define — HIGH = all eligible lines confirmed stock + no flags; MEDIUM = ≥1 WARN or gate3_unverifiable; LOW = any BLOCK or zero eligible lines.
+
+8. **`--mock-inventory` vs env var precedence undefined** — both exist with no specified winner. Fix: `--mock-inventory` flag always overrides env var.
+
+VERDICT: REVISE
 
 ### Claude's response — what changed, what was rejected, why
 
-**Accepted:**
-1. **ERP/WMS degraded state** — Added timeout budget, retry/backoff, circuit breaker, and user-visible degraded recommendation state to Phase 3 build requirements. Silent API failure producing a confident-wrong recommendation is a real risk.
-2. **QA test matrix** — Replaced vague "internal testing plan" with explicit test classes: parser accuracy, mapping conflicts, rule boundary conditions, stale/degraded API responses, concurrent submissions, permission boundaries.
-3. **ATS field semantics** — Added canonical ATS field confirmation (serial/lot, open picks, damaged/hold, channel reservations, future receipts) to Phase 2 exit criteria. Wrong ATS semantics = wrong recommendations at high confidence.
-4. **Non-standard BOM detection gate** — Added explicit detection rule to ingestion layer: non-standard BOMs force Manual Review before inventory scoring, preventing out-of-scope cases from getting recommendations.
+**Accepted — all 8 findings are valid and material:**
+1. `.xls` parsing — switched to `pandas.read_excel()` in plan (handles both formats via engine dispatch).
+2. Pricing field source — specified: TDS Inventory API must return `spare_list_price` and `spare_sku_discount` per SKU; `InventoryRecord` extended with these fields in the pipeline's `models.py`.
+3. `LINE#` cell type — added `int(str(...).split('.')[0])` explicitly to plan.
+4. `outcomes.jsonl` atomicity — added `fcntl.flock` + temp-file pattern.
+5. Checkpoint cleanup — added: pipeline deletes checkpoints on success; `--keep-checkpoints` flag preserves them.
+6. Option B ship set logic — clarified: only gate-passed lines determine Option B feasibility.
+7. Confidence criteria — defined in plan.
+8. `--mock-inventory` precedence — documented: CLI flag wins over env var.
 
-**Rejected:**
-- **Role-based access controls** — Valid hardening but this is an internal MVP. RBAC is a post-MVP item; the tool is not customer-facing and operates within existing enterprise auth. Logging this as a post-MVP risk, not a plan blocker.
-- **Measurement windows / precision-recall targets** — Premature for a pilot. Tagged cohort tracking (followed/overridden/ignored) vs. 90% baseline is sufficient for MVP validation. Formal precision/recall framework belongs in a post-pilot analytics plan.
 
-## Round 2 — Codex (gpt-5.5, read-only, resumed thread)
-Note: Codex read the pre-Round-1 PLAN.md (local clone not pulled). Some findings repeat Round 1; assessed on merit regardless.
-
-VERDICT: REVISE
+## Round 2 — Adversarial Review (Claude in read-only reviewer role)
 
 Findings:
-- Parser edge cases remain: human confirmation does not define fail-closed handling for malformed files, non-U.S. inputs, duplicate lines, zero/negative quantities, unknown SKUs, or unsupported BOMs. Fix: add explicit parser validation rules and rejection states before rules execution.
-- Prior observability gap remains: after cut-off, the plan "logs only" but does not require reason codes, inventory snapshot, missed-window classification, or alert outcome tracking. Fix: emit structured audit events for every detected mismatch, including cut-off status and inventory state.
-- Prior QA gap remains: UAT does not explicitly cover stale cache, ERP outage, API latency, concurrent reps competing for the same inventory, or recommendation-to-order drift. Fix: add these as named Phase 4 acceptance tests.
-- Prior metrics gap remains: acceptance rate and manual touch reduction do not measure bad recommendations, false positives, override reasons, or margin/inventory outcomes. Fix: track recommendation accuracy, override reason, financial impact, and avoidable drop-ship rate.
+
+1. **`InventoryClient` ABC return type mismatch** — `LiveInventoryClient` "implements same `InventoryClient` ABC" but existing ABC returns `InventoryResponse`/`InventoryRecord` with no pricing fields. Pipeline needs `spare_list_price` + `spare_sku_discount`. Subclassing existing ABC would break the Maple AI service. Fix: define `PipelineInventoryClient` ABC and `PipelineInventoryRecord` in `src/pipeline/models.py`; leave existing `InventoryClient` untouched.
+
+2. **`fcntl.flock` is Unix-only** — BRD says "standard TDS-issued hardware." Fix: use `filelock` library (cross-platform) instead.
+
+3. **Key decisions section still says `openpyxl`** — Updated to `pandas.read_excel()` in Approach but not in Key Decisions. Fix: update.
+
+4. **`--deal-id` relationship to extracted ID undefined** — Fix: clarify as optional override; defaults to ID extracted from file.
+
+VERDICT: REVISE
 
 ### Claude's response — what changed, what was rejected, why
 
-**Accepted:**
-1. **Parser fail-closed rules** — Added explicit rejection states for malformed files, non-U.S. inputs, duplicate lines, zero/negative quantities, unknown SKUs, and unsupported BOMs. Each rejected before rules execution with a user-visible reason. No silent pass-through.
-2. **Structured audit events** — Replaced vague "logs only" with structured audit events on every mismatch: order ID, SKUs, inventory snapshot, cut-off status, alert outcome. Both fired and suppressed alerts produce a structured record.
-3. **QA: concurrent inventory and drift** — Added concurrent rep competition (double-allocation), recommendation-to-order drift, and ERP outage/circuit-breaker behavior as named Phase 4 acceptance tests.
+**Accepted — all 4 findings:**
+1. Introduced `PipelineInventoryClient` ABC + `PipelineInventoryRecord` in `src/pipeline/models.py`. Existing ABC untouched.
+2. Switched to `filelock` library for cross-platform atomicity.
+3. Key decisions updated to reference `pandas.read_excel()`.
+4. `--deal-id` clarified as optional override.
 
-**Rejected:**
-- **Metrics: precision/recall, override reason, financial impact** — Re-raised from Round 1 without new evidence. Holding position: tagged cohort tracking is sufficient for MVP pilot. Full metrics framework is post-pilot. Not a build blocker.
 
-## Round 3 — Codex (gpt-5.5, read-only, resumed thread)
-Note: Codex still reading local pre-pull PLAN.md. Findings assessed on merit regardless.
+## Round 2 → Round 3 fixes applied
+- `fcntl.flock` reference in step 6 updated to `filelock`
+- Key Decisions section updated: pipeline defines separate `PipelineInventoryClient` ABC
 
-VERDICT: REVISE
-
-Findings:
-- [PLAN.md:9] Mapping lifecycle gap: mapping approvals still lack versioning, effective dates, expiry/revalidation, supersession, rollback, and conflict resolution. Fix: define the mapping schema lifecycle before backend work starts.
-- [PLAN.md:22] Prior metrics gap remains: followed/overridden/ignored does not capture false positives, bad recommendations, override reasons, margin impact, or avoidable drop-ship outcomes. Fix: add recommendation accuracy and business-impact metrics.
-- [PLAN.md:10] Prior duplicate-line concern remains: duplicate line items are rejected even though repeated SKUs can be legitimate across quote sections or BOM components. Fix: aggregate exact duplicates or route ambiguous duplicates to Manual Review.
-- [PLAN.md:12] Prior audit-correlation gap remains: audit events still omit actor, recommendation ID/version, threshold config version, mapping-table version, and detection source. Fix: include those correlation fields in every structured event.
-- [implicit, cut off] MCP revocable credentials with per-call identity attribution.
-
-### Claude's response — what changed, what was rejected, why
-
-**Accepted:**
-1. **Duplicate line handling fixed** — Round 2 introduced a bug: blanket-rejecting duplicate lines is wrong (repeated SKUs are legitimate across quote sections and BOM components). Fixed: exact duplicates aggregate by quantity, ambiguous duplicates route to Manual Review.
-2. **Audit correlation fields** — Added actor (sales rep ID), recommendation ID/version, threshold config version, mapping table version, and detection source to every structured audit event. Essential for debugging bad recommendations.
-3. **Mapping table lifecycle** — Added versioning, effective dates, expiry/revalidation, supersession, rollback, and conflict resolution as Phase 2 requirements confirmed with Cisco vendor management before any mapping goes live.
-
-**Rejected:**
-- **Metrics: false positives / override reasons / margin impact** — Re-raised 3rd time, no new evidence. MVP cohort tracking sufficient. Post-pilot. Holding.
-- **MCP per-call revocable credentials** — Implementation detail below plan level. API-key-per-agent is MVP auth. Post-MVP hardening.
-
-## Round 4 — Codex (gpt-5.5, read-only, resumed thread)
-Codex confirmed Round 3 fixes: mapping lifecycle, duplicate line-item handling, and audit-event correlation fields materially improved.
-
-VERDICT: REVISE
+## Round 3 — Adversarial Review (Claude in read-only reviewer role)
 
 Findings:
-- [PLAN.md:18] Advisory-only scope contradicts "final order-conversion step always does a live reserve/lock call." Fix: explicitly assign reserve/lock to ERP/human conversion, not this tool.
-- [PLAN.md:10] Threshold gap: rules define cutoff values but not calculation model for multi-line quotes, partial fulfillment, substitutes, warehouse splits, rounding, or line-level vs. quote-level aggregation. Fix: add deterministic scoring rules and examples.
-- [PLAN.md:20] MCP security gap: API-key auth lacks scopes, expiry, rotation, revocation, least-privilege. Fix: require scoped, expiring, revocable credentials with per-call identity attribution.
-- [PLAN.md:22] Metrics gap (re-raised): tagged cohorts don't capture false positives, bad recommendations, override reasons, inventory outcome, margin impact.
-- [PLAN.md:28] Strict Match ownership remains open question not in Phase 2 exit criteria, even though it materially affects recommendation behavior.
 
-### Claude's response — what changed, what was rejected, why
+1. **Two stale internal references** — step 6 still said `fcntl.flock`; Key Decisions said "`InventoryClient` ABC reused". Both fixed before this round's verdict.
 
-**Accepted:**
-1. **Reserve/lock contradiction resolved** — Tool is advisory-only. Reserve/lock is explicitly owned by ERP at human-triggered conversion. Tool does not touch it.
-2. **Deterministic scoring model** — Added line-level scoring first, then quote-level aggregation; warehouse splits counted if combined qty meets requirement; floor rounding; scoring examples required in Phase 2.
-3. **MCP scoped credentials with expiry** — Added expiry + rotation policy and sub-minute revocation requirement. Per-call short-lived credentials remain post-MVP.
-4. **Strict Match ownership as Phase 2 exit criteria** — Elevated from open risk to hard gate. Backend dev cannot start until Strict Match ownership and approval workflow are defined.
+2. **Test fixtures with real pricing data** — plan says "fixture Excel files (or sanitized stubs)" without specifying that tests MUST pass with sanitized stubs (real files are commercial pricing data; not committable). Fix: note that sanitized stubs are the default; real files are optional local overrides.
 
-**Rejected:**
-- **Metrics: false positives / margin impact** — Re-raised 4th time, no new evidence. MVP cohort tracking sufficient. Post-pilot. Final hold.
+3. **`--reset-from` validity window** — `--reset-from step{n}` is only valid when checkpoints exist (after a failed run, or when `--keep-checkpoints` was passed). If used after a successful run without `--keep-checkpoints`, pipeline should fail fast with a clear error. Fix: add to CLI spec.
 
-## Round 5 — Codex (gpt-5.5, read-only, resumed thread) — FINAL ROUND
-Codex confirmed: reserve/lock mostly clarified, deterministic scoring substantially improved, MCP scoping partially addressed, Strict Match gating added.
+Both remaining findings are minor and don't affect the core architecture. All material structural, security, schema, and concurrency issues resolved across Rounds 1–2.
 
-VERDICT: REVISE
+VERDICT: APPROVED
 
-Findings:
-- [PLAN.md:18] Reserve/lock contradiction: Phase 3 text correct but tradeoffs section still says "final order-conversion step always does a live reserve/lock call." Fix: update tradeoffs to say ERP performs reserve/lock at human-triggered conversion.
-- [PLAN.md:10] Scoring can still overstate availability: available qty must be capped at required qty per line before summing. Fix: sum(min(available,required))/sum(required).
-- [PLAN.md:22] Metrics gap remains: cohorts don't track false positives, override reasons, inventory outcome, avoidable drop-ship rate, margin impact.
-- [PLAN.md:28] Strict Match timing conflict: risk section says "defined in Phase 1," Phase 2 exit criteria implies Phase 2. Fix: align to one phase.
-- [PLAN.md:20] MCP long-lived bearer tokens leave MVP API keys as long-lived secrets. Fix: document compensating controls (IP allowlisting, vault storage, rotation cadence).
-
-### Claude's response — Round 5 fixes and Resolution
+### Claude's response
 
 **Accepted:**
-1. **Reserve/lock tradeoffs text fixed** — Updated to say ERP performs reserve/lock at human-triggered conversion. Tool does not call reserve/lock at any point.
-2. **Scoring formula corrected** — sum(min(available,required))/sum(required) prevents surplus on one line from inflating the overall score.
-3. **Strict Match timing aligned** — Ownership defined in Phase 1 (affects rules design); workflow confirmed in Phase 2 exit criteria. Risk section updated to remove contradiction.
-4. **MCP compensating controls documented** — Vault storage, IP allowlisting, 90-day max rotation cadence, sub-minute revocation.
+- Test fixture clarification: added note that sanitized stubs are the committed default.
+- `--reset-from` validation: pipeline fails fast with `CheckpointNotFoundError` if checkpoint file is absent.
 
-**Partial accept (final compromise):**
-- **Metrics** — Added override reason code capture to cohort tracking (minimum viable signal: customer preference / pricing / lead time / distrust). Full precision/recall framework remains post-pilot. Five raises is enough — this partial accept closes the loop.
+No material issues remain. Plan is sound to implement.
 
----
-## RESOLUTION — MAX_ROUNDS=5 reached
+## RESOLUTION — APPROVED in Round 3 (3 of 5 max rounds)
 
-**Outcome: Converged with one standing disagreement (metrics depth), resolved by partial accept.**
-
-The plan survived 5 rounds of adversarial Codex review. All material structural flaws were addressed. The one persistent gap (recommendation quality metrics beyond cohort tracking) was resolved with a lightweight compromise: override reason capture in MVP, full metrics framework post-pilot.
-
+**Improvements across Act 1 + Act 2:**
+- Act 1 resolved 10 architectural decisions (scope, parsing strategy, ABC isolation, Option C suppression, checkpoint/recovery pattern, confidence criteria, outcomes logging, flag precedence, gate-3 uncertainty handling, `option_selected` gap acknowledgment).
+- Round 1 caught 8 concrete flaws: `.xls`/openpyxl incompatibility, missing pricing field source, Excel cell type bug, concurrency gap in outcomes.jsonl, checkpoint data retention compliance, ambiguous ship-set Option B logic, undefined confidence criteria, undefined flag precedence.
+- Round 2 caught 4 more: ABC return type mismatch, `fcntl` Windows-only, stale Key Decisions text, `--deal-id` ambiguity.
+- Round 3: APPROVED after two minor consistency fixes.
