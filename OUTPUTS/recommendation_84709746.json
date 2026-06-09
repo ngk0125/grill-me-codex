@@ -1,0 +1,40 @@
+{
+  "deal_id": "84709746",
+  "generated_at": "2026-06-09T17:40:07.533291Z",
+  "ship_sets": [
+    {
+      "ship_set_id": 1,
+      "option_a": {
+        "available": true,
+        "reason": null,
+        "lead_time": "Ships from Cisco in approximately 4 weeks",
+        "net_price": null,
+        "warehouse_coverage_pct": null
+      },
+      "option_b": {
+        "available": false,
+        "reason": "Insufficient coverage \u2014 one or more lines have no warehouse fulfillment path",
+        "lead_time": "",
+        "net_price": null,
+        "warehouse_coverage_pct": null
+      },
+      "option_c_suppressed": true,
+      "review_queue": [
+        {
+          "line_number": "1.1",
+          "sku": "C9300-48P-A",
+          "spare_sku": "C9300-48P-A=",
+          "flag": "BLOCK",
+          "reason": "Pricing ceiling exceeded \u2014 Option B suppressed for this line",
+          "spare_net_price": 5178.9012,
+          "unit_net_price": 5000.0
+        }
+      ],
+      "confidence": "LOW",
+      "eligible_line_count": 4,
+      "total_line_count": 7
+    }
+  ],
+  "total_lines": 7,
+  "total_eligible": 4
+}

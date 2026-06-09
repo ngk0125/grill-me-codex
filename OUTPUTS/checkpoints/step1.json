@@ -1,0 +1,17 @@
+{
+  "file": "/tmp/pytest-of-root/pytest-1/test_confidence_high_when_clea0/deal_84709746.xlsx",
+  "format": ".xlsx",
+  "columns_present": [
+    "BpaBuyingProgram",
+    "Description",
+    "INCLUDED ITEM",
+    "LINE#",
+    "Order Type",
+    "Quantity",
+    "SKU",
+    "SPARE EQUIVALENT SKU NAME",
+    "Ship Complete",
+    "UNIT NET PRICE"
+  ],
+  "validation": "PASSED"
+}
