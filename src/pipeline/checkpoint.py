@@ -5,7 +5,8 @@ import json
 from pathlib import Path
 from typing import Any
 
-_CHECKPOINT_DIR = Path("OUTPUTS/checkpoints")
+_PROJECT_ROOT = Path(__file__).parent.parent.parent
+_CHECKPOINT_DIR = _PROJECT_ROOT / "OUTPUTS" / "checkpoints"
 
 
 def checkpoint_path(step: int) -> Path:

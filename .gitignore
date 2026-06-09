@@ -7,3 +7,6 @@ dist/
 build/
 .venv/
 venv/
+
+# Pipeline runtime outputs — generated at run time, not source
+OUTPUTS/

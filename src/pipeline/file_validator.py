@@ -12,6 +12,7 @@ import pandas as pd
 
 from .checkpoint import write_checkpoint
 
+# Columns that must be present in every Cisco SPA Deal ID file.
 REQUIRED_COLUMNS = {
     "LINE#",
     "INCLUDED ITEM",
@@ -19,6 +20,10 @@ REQUIRED_COLUMNS = {
     "UNIT NET PRICE",
     "BpaBuyingProgram",
 }
+
+# At least one of these must be present as the SKU/part-number column.
+# The exact name varies across SPA versions; validated separately below.
+SKU_COLUMN_CANDIDATES = ("SKU", "Part Number", "PART NUMBER", "PN", "Item Number")
 
 
 class ValidationError(Exception):
@@ -51,6 +56,13 @@ def run(file_path: str | Path) -> dict:
             f"Missing required columns: {missing}. "
             f"Found columns: {sorted(present)}",
             missing_columns=missing,
+        )
+
+    if not any(c in present for c in SKU_COLUMN_CANDIDATES):
+        raise ValidationError(
+            f"No SKU/part-number column found. "
+            f"Expected one of {SKU_COLUMN_CANDIDATES}. "
+            f"Found columns: {sorted(present)}",
         )
 
     result = {

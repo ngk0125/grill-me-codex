@@ -12,10 +12,8 @@ from typing import Optional
 import pandas as pd
 
 from .checkpoint import write_checkpoint
+from .file_validator import SKU_COLUMN_CANDIDATES
 from .models import SPALine
-
-# Columns that are optional — absence is handled gracefully
-_OPTIONAL_COLS = {"Ship Complete", "Order Type", "Description", "SKU", "Part Number"}
 
 
 def _str_or_none(val) -> Optional[str]:
@@ -52,12 +50,15 @@ def _parse_ship_set_id(line_num_val) -> int:
         return 0
 
 
-def _detect_sku_column(columns: list[str]) -> Optional[str]:
-    """Find the SKU/part number column by common names."""
-    for candidate in ("SKU", "Part Number", "PART NUMBER", "PN", "Item Number"):
+def _detect_sku_column(columns: list[str]) -> str:
+    """Return the SKU/part-number column name; raises if not found."""
+    for candidate in SKU_COLUMN_CANDIDATES:
         if candidate in columns:
             return candidate
-    return None
+    raise ValueError(
+        f"No SKU column found in {columns}. Expected one of {SKU_COLUMN_CANDIDATES}. "
+        "Run file_validator first."
+    )
 
 
 def _detect_order_type_column(columns: list[str]) -> Optional[str]:
@@ -80,7 +81,7 @@ def run(file_path: str | Path) -> list[SPALine]:
     df = df.where(df.notna(), None)
 
     cols = list(df.columns)
-    sku_col = _detect_sku_column(cols)
+    sku_col = _detect_sku_column(cols)      # raises if absent — validated upstream
     order_type_col = _detect_order_type_column(cols)
     ship_complete_col = _detect_ship_complete_column(cols)
 
@@ -93,9 +94,7 @@ def run(file_path: str | Path) -> list[SPALine]:
         line_number = str(line_num_val).strip()
         ship_set_id = _parse_ship_set_id(line_num_val)
 
-        sku = ""
-        if sku_col:
-            sku = _str_or_none(row.get(sku_col)) or ""
+        sku = _str_or_none(row.get(sku_col)) or ""
 
         description = _str_or_none(row.get("Description")) or ""
         quantity = _int_qty(row.get("Quantity") or row.get("QTY") or 1)

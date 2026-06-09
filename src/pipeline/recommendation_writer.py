@@ -29,7 +29,8 @@ from .models import (
 # Phase 1 hard suppression — do NOT change to True without Nicko Roussos sign-off
 OPTION_C_ENABLED = False
 
-_OUTPUTS_DIR = Path("OUTPUTS")
+_PROJECT_ROOT = Path(__file__).parent.parent.parent
+_OUTPUTS_DIR = _PROJECT_ROOT / "OUTPUTS"
 _OUTCOMES_FILE = _OUTPUTS_DIR / "outcomes.jsonl"
 _OUTCOMES_LOCK = _OUTPUTS_DIR / "outcomes.jsonl.lock"
 
