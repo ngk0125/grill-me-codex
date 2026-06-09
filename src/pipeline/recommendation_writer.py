@@ -6,8 +6,10 @@ Requires Nicko Roussos sign-off to unlock (code change, not config).
 """
 from __future__ import annotations
 
+import html as html_lib
 import json
 import os
+import string
 import tempfile
 from collections import defaultdict
 from datetime import datetime, timezone
@@ -39,7 +41,20 @@ def _build_review_queue(lines: list[SPALine]) -> list[ReviewQueueItem]:
     items: list[ReviewQueueItem] = []
     for line in lines:
         ps = line.pricing_status
-        if ps == "BLOCK":
+
+        if ps == "BLOCK" and line.missing_price:
+            items.append(
+                ReviewQueueItem(
+                    line_number=line.line_number,
+                    sku=line.sku,
+                    spare_sku=line.spare_sku,
+                    flag="STALE_OR_MISSING_PRICE",
+                    reason="Spare SKU price data unavailable — Option B cannot be priced, contact pricing team",
+                    spare_net_price=line.spare_net_price,
+                    unit_net_price=line.unit_net_price,
+                )
+            )
+        elif ps == "BLOCK":
             items.append(
                 ReviewQueueItem(
                     line_number=line.line_number,
@@ -63,6 +78,19 @@ def _build_review_queue(lines: list[SPALine]) -> list[ReviewQueueItem]:
                     unit_net_price=line.unit_net_price,
                 )
             )
+
+        if line.inventory_is_stale:
+            items.append(
+                ReviewQueueItem(
+                    line_number=line.line_number,
+                    sku=line.sku,
+                    spare_sku=line.spare_sku,
+                    flag="STALE_DATA",
+                    reason="Inventory data may not reflect current stock — verify before booking",
+                    spare_net_price=line.spare_net_price,
+                    unit_net_price=line.unit_net_price,
+                )
+            )
     return items
 
 
@@ -72,11 +100,11 @@ def _compute_confidence(
 ) -> Confidence:
     if not eligible_lines:
         return "LOW"
-    has_block = any(item.flag == "BLOCK" for item in review_queue)
+    has_block = any(item.flag in ("BLOCK", "STALE_OR_MISSING_PRICE") for item in review_queue)
     if has_block:
         return "LOW"
     has_warn_or_unverifiable = any(
-        item.flag == "WARN" for item in review_queue
+        item.flag in ("WARN", "STALE_DATA") for item in review_queue
     ) or any(line.gate3_unverifiable for line in eligible_lines)
     if has_warn_or_unverifiable:
         return "MEDIUM"
@@ -193,6 +221,113 @@ def _append_outcome(deal_id: str, rec: PipelineRecommendation) -> None:
         except Exception:
             os.unlink(tmp_path)
             raise
+
+
+_HTML_TEMPLATE = string.Template("""\
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Deal $deal_id &#8212; Fulfillment Recommendation</title>
+<style>
+  body{font-family:Arial,sans-serif;max-width:920px;margin:40px auto;color:#333}
+  h1{font-size:1.4em;border-bottom:2px solid #0050a0;padding-bottom:8px}
+  h2{font-size:1.1em;margin-top:28px}
+  .ship-set{border:1px solid #ddd;border-radius:6px;padding:16px;margin:16px 0}
+  .opt{display:inline-block;border:1px solid #bbb;border-radius:4px;padding:10px 16px;
+       margin:8px 8px 8px 0;min-width:210px;vertical-align:top}
+  .opt-a{background:#f0f7ff}
+  .opt-b-y{background:#f0fff4;border-color:#2e7d32}
+  .opt-b-n{background:#fff8f0;border-color:#e65100}
+  .badge{display:inline-block;font-size:.75em;padding:2px 7px;border-radius:3px;margin-left:6px}
+  .HIGH{background:#c8e6c9;color:#1b5e20}
+  .MEDIUM{background:#fff9c4;color:#f57f17}
+  .LOW{background:#ffcdd2;color:#b71c1c}
+  table{width:100%;border-collapse:collapse;font-size:.9em;margin-top:8px}
+  th{background:#f5f5f5;text-align:left;padding:6px;border-bottom:2px solid #ddd}
+  td{padding:5px 6px;border-bottom:1px solid #eee}
+  .BLOCK,.STALE_OR_MISSING_PRICE{color:#c62828;font-weight:bold}
+  .WARN{color:#e65100}
+  .STALE_DATA{color:#7b1fa2}
+  .footer{margin-top:40px;font-size:.8em;color:#888}
+</style>
+</head>
+<body>
+<h1>Cisco Fulfillment Recommendation &#8212; Deal $deal_id</h1>
+<p>Generated: $generated_at &nbsp;|&nbsp; Total lines: $total_lines &nbsp;|&nbsp;
+Eligible: $total_eligible</p>
+$ship_sets_html
+<div class="footer">
+<p><strong>Option A</strong> &#8212; Standard drop-ship via Cisco (approx. 4 weeks).<br>
+<strong>Option B</strong> &#8212; Warehouse fulfillment from TDS stock (1&#8211;3 business days).<br>
+Option C is not available in Phase 1.</p>
+</div>
+</body>
+</html>""")
+
+
+def _render_ship_set_html(ss: ShipSetRecommendation) -> str:
+    conf_badge = (
+        f'<span class="badge {html_lib.escape(ss.confidence)}">'
+        f'{html_lib.escape(ss.confidence)}</span>'
+    )
+    b_cls = "opt-b-y" if ss.option_b.available else "opt-b-n"
+    b_status = "Available" if ss.option_b.available else "Not available"
+    b_reason = (
+        f'<br><small>{html_lib.escape(ss.option_b.reason or "")}</small>'
+        if ss.option_b.reason else ""
+    )
+    b_price = (
+        f'<br>Net price: <strong>${ss.option_b.net_price:,.2f}</strong>'
+        if ss.option_b.net_price is not None else ""
+    )
+    b_lead = html_lib.escape(ss.option_b.lead_time) if ss.option_b.lead_time else ""
+
+    review_rows = ""
+    for item in ss.review_queue:
+        review_rows += (
+            f'<tr><td>{html_lib.escape(item.line_number)}</td>'
+            f'<td>{html_lib.escape(item.sku)}</td>'
+            f'<td>{html_lib.escape(item.spare_sku or "")}</td>'
+            f'<td class="{html_lib.escape(item.flag)}">{html_lib.escape(item.flag)}</td>'
+            f'<td>{html_lib.escape(item.reason)}</td></tr>'
+        )
+    review_section = ""
+    if review_rows:
+        review_section = (
+            "<h2>Review Queue</h2>"
+            '<table><tr><th>Line</th><th>SKU</th><th>Spare SKU</th>'
+            '<th>Flag</th><th>Reason</th></tr>'
+            f"{review_rows}</table>"
+        )
+
+    return (
+        f'<div class="ship-set">'
+        f'<h2>Ship Set {html_lib.escape(str(ss.ship_set_id))} '
+        f'({ss.eligible_line_count}/{ss.total_line_count} lines eligible) {conf_badge}</h2>'
+        f'<div class="opt opt-a"><strong>Option A</strong><br>'
+        f'{html_lib.escape(ss.option_a.lead_time)}</div>'
+        f'<div class="opt {b_cls}"><strong>Option B</strong> &#8212; {b_status}'
+        f'{b_reason}{b_price}<br>{b_lead}</div>'
+        f'{review_section}'
+        f'</div>'
+    )
+
+
+def generate_html(rec: PipelineRecommendation) -> str:
+    """Render rec as a self-contained, CSS-inline HTML string (HTML fallback path).
+
+    All user-data fields are passed through html.escape() to prevent malformed output.
+    Mirrors FR-P01–FR-P06. Does NOT satisfy FR-P04 (rep confirmation POST) — fallback only.
+    """
+    ship_sets_html = "\n".join(_render_ship_set_html(ss) for ss in rec.ship_sets)
+    return _HTML_TEMPLATE.substitute(
+        deal_id=html_lib.escape(rec.deal_id),
+        generated_at=html_lib.escape(rec.generated_at.strftime("%Y-%m-%d %H:%M:%S UTC")),
+        total_lines=rec.total_lines,
+        total_eligible=rec.total_eligible,
+        ship_sets_html=ship_sets_html,
+    )
 
 
 def run(deal_id: str, lines: list[SPALine]) -> PipelineRecommendation:

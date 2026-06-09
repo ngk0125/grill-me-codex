@@ -2,11 +2,12 @@
 
 Usage:
   python -m src.pipeline.pipeline --file PATH [--deal-id ID]
-      [--reset-from step{n}] [--mock-inventory] [--keep-checkpoints]
+      [--reset-from step{n}] [--mock-inventory] [--keep-checkpoints] [--html]
 
 --reset-from step{n}  Resume from agent n (requires checkpoint n-1 to exist).
 --mock-inventory      Force mock client regardless of INVENTORY_API_URL env var.
 --keep-checkpoints    Do not delete checkpoints after successful completion.
+--html                Also write OUTPUTS/recommendation_{deal_id}.html (fallback panel).
 --deal-id             Optional override for deal ID extracted from file.
 """
 from __future__ import annotations
@@ -61,7 +62,16 @@ def run(
     reset_from: str | None = None,
     mock_inventory: bool = False,
     keep_checkpoints: bool = False,
+    html: bool = False,
 ) -> None:
+    import os
+    if os.environ.get("PIPELINE_ENV") == "production" and keep_checkpoints:
+        print(
+            "ERROR: --keep-checkpoints requires Legal approval in production",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
     start_step = _parse_step(reset_from)
     client = _build_client(mock_inventory)
 
@@ -136,7 +146,13 @@ def run(
     # -----------------------------------------------------------------------
     # Summary
     # -----------------------------------------------------------------------
-    print(f"\n✓ Done — OUTPUTS/recommendation_{deal_id}.json", flush=True)
+    if html:
+        from . import recommendation_writer as _rw
+        html_path = _rw._OUTPUTS_DIR / f"recommendation_{deal_id}.html"
+        html_path.write_text(_rw.generate_html(rec), encoding="utf-8")
+        print(f"\n✓ Done — OUTPUTS/recommendation_{deal_id}.json + .html", flush=True)
+    else:
+        print(f"\n✓ Done — OUTPUTS/recommendation_{deal_id}.json", flush=True)
     for ss in rec.ship_sets:
         b_label = "AVAILABLE" if ss.option_b.available else f"SUPPRESSED ({ss.option_b.reason})"
         flags = [item.flag for item in ss.review_queue]
@@ -158,6 +174,7 @@ def main() -> None:
     parser.add_argument("--reset-from", default=None, metavar="STEP", help="Resume from step{n} (e.g. step3)")
     parser.add_argument("--mock-inventory", action="store_true", help="Force mock inventory client")
     parser.add_argument("--keep-checkpoints", action="store_true", help="Keep checkpoint files after completion")
+    parser.add_argument("--html", action="store_true", help="Also write HTML recommendation file")
     args = parser.parse_args()
 
     run(
@@ -166,6 +183,7 @@ def main() -> None:
         reset_from=args.reset_from,
         mock_inventory=args.mock_inventory,
         keep_checkpoints=args.keep_checkpoints,
+        html=args.html,
     )
 
 

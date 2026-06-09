@@ -46,6 +46,22 @@ def _price_line(line: SPALine, client: PipelineInventoryClient) -> SPALine:
     available_qty = record.available_qty if record else 0
     spare_list_price = record.spare_list_price if record else 0.0
     spare_sku_discount = record.spare_sku_discount if record else 0.0
+    inventory_is_stale = resp.is_stale
+
+    # Zero-price guard: API misconfiguration or missing data — cannot price Option B
+    if spare_list_price == 0.0:
+        return line.model_copy(
+            update={
+                "available_qty": available_qty,
+                "spare_list_price": 0.0,
+                "spare_sku_discount": spare_sku_discount,
+                "spare_net_price": 0.0,
+                "pricing_status": "BLOCK",
+                "missing_price": True,
+                "inventory_is_stale": inventory_is_stale,
+            }
+        )
+
     spare_net_price = spare_list_price * (1.0 - spare_sku_discount)
 
     ceiling = line.unit_net_price
@@ -63,6 +79,7 @@ def _price_line(line: SPALine, client: PipelineInventoryClient) -> SPALine:
             "spare_sku_discount": spare_sku_discount,
             "spare_net_price": spare_net_price,
             "pricing_status": pricing_status,
+            "inventory_is_stale": inventory_is_stale,
         }
     )
 

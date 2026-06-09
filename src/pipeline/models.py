@@ -9,7 +9,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Dict, List, Literal, Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from ..inventory.models import InventoryRecord
 
@@ -19,14 +19,16 @@ from ..inventory.models import InventoryRecord
 # ---------------------------------------------------------------------------
 
 class PipelineInventoryRecord(InventoryRecord):
-    spare_list_price: float = 0.0
-    spare_sku_discount: float = 0.0
+    spare_list_price: float = Field(default=0.0, ge=0.0)
+    spare_sku_discount: float = Field(default=0.0, ge=0.0, le=1.0)
 
 
 class PipelineInventoryResponse(BaseModel):
     records: Dict[str, PipelineInventoryRecord]
     queried_at: datetime
     is_degraded: bool
+    is_stale: bool = False
+    data_as_of: Optional[datetime] = None
 
 
 # ---------------------------------------------------------------------------
@@ -46,7 +48,7 @@ PricingStatus = Literal["OK", "WARN", "BLOCK", "SKIPPED"]
 
 Confidence = Literal["HIGH", "MEDIUM", "LOW"]
 
-ReviewFlag = Literal["WARN", "BLOCK"]
+ReviewFlag = Literal["WARN", "BLOCK", "STALE_DATA", "STALE_OR_MISSING_PRICE"]
 
 
 class SPALine(BaseModel):
@@ -71,6 +73,8 @@ class SPALine(BaseModel):
     spare_net_price: Optional[float] = None
     pricing_status: Optional[PricingStatus] = None
     dna_auto_pass: bool = False
+    inventory_is_stale: bool = False
+    missing_price: bool = False
 
 
 class ReviewQueueItem(BaseModel):
