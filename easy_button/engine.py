@@ -15,9 +15,14 @@ Rule set validated against Steff's answer-key tables in
 
 The engine never invents a SKU. Anything outside the rules raises a flag
 for human review instead of guessing.
+
+Negative pricing: lines with any negative price field are flagged for human
+review — they may represent credits or adjustments not covered by R1-R5.
 """
 import csv
+import os
 import re
+import tempfile
 import xlrd
 
 COL = dict(line=5, sku=7, included=8, qty=9, dur=10, list=14, extlist=15,
@@ -29,6 +34,7 @@ _MIN_NCOLS = max(COL.values()) + 1
 _SERVICE_PREFIX = "CON-"
 _LINE_ID_RE = re.compile(r'^\d+(\.\d+)*$')
 _FORMULA_CHARS = frozenset(('=', '+', '-', '@', '\t', '\r'))
+_PRICE_COLS = ('list', 'extlist', 'net', 'extnet', 'sparelist', 'sparedisc', 'qty', 'dur')
 
 
 def _num(v):
@@ -53,10 +59,23 @@ def _sanitize_csv(v):
     return s
 
 
+def _safe_sort_key(s):
+    parts = []
+    for x in s.split("."):
+        try:
+            parts.append(float(x))
+        except ValueError:
+            parts.append(0.0)
+    return parts
+
+
 def read_tables(sheet):
     """Split a sheet into (original, answer_key) line lists.
 
     Raises ValueError on schema violations or empty sheets.
+    Any numeric line-ID cell or unparseable pricing cell is a blocking error —
+    the row is skipped and the error is recorded in the returned flags list
+    attached to a sentinel row so callers can surface it.
     """
     if sheet.ncols < _MIN_NCOLS:
         raise ValueError(
@@ -65,7 +84,7 @@ def read_tables(sheet):
         )
 
     blocks, cur, empties = [], [], 0
-    parse_flags = []
+    parse_errors = []
 
     for r in range(1, sheet.nrows):
         vals = [sheet.cell_value(r, c) for c in range(sheet.ncols)]
@@ -82,30 +101,46 @@ def read_tables(sheet):
 
         row = {}
         row_flags = []
+        skip_row = False
 
         for k, c in COL.items():
             cell = sheet.cell(r, c)
             if k == 'line':
                 if cell.ctype == xlrd.XL_CELL_NUMBER:
-                    row_flags.append(
+                    msg = (
                         f"row {r}: line ID is numeric in Excel "
-                        f"(value={cell.value!r}) — re-export with line column as text"
+                        f"(value={cell.value!r}) — original value unrecoverable; "
+                        "re-export with line column as text; row skipped"
                     )
+                    row_flags.append(msg)
+                    parse_errors.append(msg)
+                    skip_row = True
+                    break
                 row[k] = _strip(cell.value)
-            elif k in ('list', 'extlist', 'net', 'extnet', 'sparelist', 'sparedisc', 'qty', 'dur'):
+            elif k in _PRICE_COLS:
                 raw = cell.value
-                try:
-                    row[k] = float(raw) if raw not in (None, '') else 0.0
-                except (TypeError, ValueError):
-                    row_flags.append(
-                        f"row {r}, col '{k}': unparseable value {raw!r} — treated as 0"
-                    )
+                if raw in (None, ''):
                     row[k] = 0.0
+                else:
+                    try:
+                        row[k] = float(raw)
+                    except (TypeError, ValueError):
+                        msg = (
+                            f"row {r}, col '{k}': unparseable value {raw!r} — "
+                            "cannot safely determine value; row skipped"
+                        )
+                        row_flags.append(msg)
+                        parse_errors.append(msg)
+                        skip_row = True
+                        break
             else:
                 row[k] = _strip(cell.value)
 
+        if skip_row:
+            cur.append({'_flags': row_flags, 'line': '', '_skip': True})
+            continue
+
         row['_flags'] = row_flags
-        parse_flags.extend(row_flags)
         cur.append(row)
 
     if cur:
@@ -124,26 +159,30 @@ def translate(lines, keep_zero_dollar_lines=False):
     for ln in lines:
         flags.extend(ln.get('_flags', []))
 
+    # Skip sentinel rows produced by read_tables for blocking parse errors
+    valid_lines = [ln for ln in lines if not ln.get('_skip')]
+
     bundles = {}
-    for ln in lines:
+    for ln in valid_lines:
         line_id = ln["line"]
         parts = line_id.split(".")
         bundles.setdefault(".".join(parts[:2]), []).append(ln)
 
-    def sort_key(item):
-        try:
-            return [float(x) for x in item[0].split(".")]
-        except ValueError:
-            return [0.0]
-
-    for head, bl in sorted(bundles.items(), key=sort_key):
+    for head, bl in sorted(bundles.items(), key=lambda item: _safe_sort_key(item[0])):
         is_parent = head.endswith(".0")
         head_lines = [ln for ln in bl if ln["line"] == head]
-        if not is_parent and not head_lines:
-            flags.append(
-                f"bundle '{head}': no head line found — "
-                "descendants kept without R4 swap opportunity"
-            )
+
+        if not is_parent:
+            if not head_lines:
+                flags.append(
+                    f"bundle '{head}': no head line found — "
+                    "descendants kept without R4 swap opportunity"
+                )
+            elif len(head_lines) > 1:
+                flags.append(
+                    f"bundle '{head}': {len(head_lines)} duplicate head lines found — "
+                    "expected exactly one; using first occurrence"
+                )
 
         has_value = any(
             _num(l.get("list")) > 0
@@ -160,6 +199,17 @@ def translate(lines, keep_zero_dollar_lines=False):
                     f"line ID '{line_id}' is not a valid dotted-integer — row skipped"
                 )
                 continue
+
+            # Negative pricing: flag for human review — may be credit/adjustment
+            has_negative = any(
+                _num(ln.get(f)) < 0
+                for f in ('list', 'extlist', 'net', 'extnet')
+            )
+            if has_negative:
+                flags.append(
+                    f"line {line_id} ({ln['sku']}): negative pricing detected — "
+                    "may be a credit or adjustment line; human review required"
+                )
 
             spare = _strip(ln.get("spare", ""))
 
@@ -244,7 +294,7 @@ def translate_workbook(path, keep_zero_dollar_lines=False):
 
         sheet_result = {
             "deal": name,
-            "input_lines": len(orig),
+            "input_lines": len([ln for ln in orig if not ln.get('_skip')]),
             "output_lines": len(kept),
             "decisions": decisions,
             "flags": flags,
@@ -263,10 +313,11 @@ def _validate(kept, answer_key):
     all_kept_groups = {d["line"].split(".")[0] for d in kept}
     extra_groups = all_kept_groups - exp_groups
 
-    # Use ordered lists keyed by (line_id, occurrence) to handle duplicates
     exp_by_line: dict = {}
     for e in answer_key:
         k = str(e["line"])
+        if not _LINE_ID_RE.match(k):
+            continue  # malformed answer-key line — skip rather than crash
         exp_by_line.setdefault(k, []).append(e)
 
     my_by_line: dict = {}
@@ -278,7 +329,7 @@ def _validate(kept, answer_key):
 
     all_keys = sorted(
         set(exp_by_line) | set(my_by_line),
-        key=lambda s: [float(x) for x in s.split(".")],
+        key=_safe_sort_key,
     )
     for k in all_keys:
         exp_entries = exp_by_line.get(k, [])
@@ -302,20 +353,40 @@ def _validate(kept, answer_key):
 
 
 def export_csv(report, out_path):
-    """Write orderable lines to CSV. Skips sheets with unresolved UNKNOWN-DESCENDANTs.
+    """Write orderable lines to CSV.
 
+    Raises ValueError if any sheet has unresolved UNKNOWN-DESCENDANTs —
+    the caller must resolve all flags before export.
     Sanitizes all cells against Excel formula injection.
+    Uses atomic write (temp file + rename) to avoid partial output.
     """
-    with open(out_path, "w", newline="") as f:
-        w = csv.writer(f)
-        w.writerow(["DEAL"] + [x.upper() for x in OUT_FIELDS])
-        for sheet in report["sheets"]:
-            if sheet.get("has_unknown_descendants"):
-                continue  # block export until human classifies flagged lines
-            for d in sheet["decisions"]:
-                if d["action"] not in ("drop", "flag"):
-                    w.writerow(
-                        [_sanitize_csv(sheet["deal"])]
-                        + [_sanitize_csv(d.get(k, "")) for k in OUT_FIELDS]
-                    )
+    blocked = [s["deal"] for s in report["sheets"] if s.get("has_unknown_descendants")]
+    if blocked:
+        raise ValueError(
+            f"Export blocked: sheets {blocked} have unresolved UNKNOWN-DESCENDANT flags. "
+            "Classify each flagged line as keep or drop before exporting."
+        )
+
+    out_dir = os.path.dirname(os.path.abspath(out_path))
+    fd, tmp_path = tempfile.mkstemp(dir=out_dir, suffix=".csv.tmp")
+    try:
+        with os.fdopen(fd, "w", newline="") as f:
+            w = csv.writer(f)
+            w.writerow(["DEAL"] + [x.upper() for x in OUT_FIELDS])
+            for sheet in report["sheets"]:
+                if "error" in sheet:
+                    continue
+                for d in sheet["decisions"]:
+                    if d["action"] not in ("drop", "flag"):
+                        w.writerow(
+                            [_sanitize_csv(sheet["deal"])]
+                            + [_sanitize_csv(d.get(k, "")) for k in OUT_FIELDS]
+                        )
+        os.replace(tmp_path, out_path)
+    except Exception:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+        raise
     return out_path
