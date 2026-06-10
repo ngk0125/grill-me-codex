@@ -94,3 +94,41 @@ All engine.py/agent.py/translate.py code findings are re-raises (code unchanged 
 
 **Rejected (all code re-raises):**
 - All engine.py / agent.py / translate.py findings are re-raises of previously accepted gaps. Code is unchanged because this is a design review, not an implementation PR. No new findings.
+
+## Round 5 — Codex (resumed session, read-only) — FINAL ROUND
+VERDICT: REVISE
+
+New findings:
+- `keep_zero_dollar_lines` unresolved but changes actual orderable output — must decide before shipping or block export.
+- R5 "enforced by copying the price dict" inaccurate — `OUT_FIELDS` omits `extlist`, `dur`, `included`, `sparelist`, `sparedisc`. R5 claim must be narrowed.
+- `_num()` silently converts unparseable/currency values to 0.0 — can drop value-bearing bundles via R3.
+
+All other findings are re-raises of previously accepted gaps (code unchanged).
+
+### Claude's response — Round 5 final fixes and Resolution
+
+**Accepted (3 new):**
+1. **`keep_zero_dollar_lines` decision gate** — must be resolved before shipping. Added: get Steff's answer and hardcode, or block export until explicit decision is recorded.
+2. **R5 OUT_FIELDS gap** — corrected the R5 claim: only list/net/extnet/qty are preserved; extlist/dur/included/sparelist/sparedisc are NOT currently exported. Added as Gap R5-1.
+3. **`_num()` silent 0.0 coercion** — currency-formatted values coerce to 0.0, can trigger false R3 drops. Added as Gap R5-2.
+
+**Rejected (all code re-raises):**
+- All engine.py / agent.py / translate.py code findings are re-raises. Code unchanged — design review only.
+
+---
+## RESOLUTION — MAX_ROUNDS=5 reached
+
+**Outcome: REVISE at round cap. Standing disagreement: Codex treats "code unchanged" as a blocker; Claude treats this as a design review, not an implementation PR.**
+
+The plan now contains a complete, precise gap register for the Easy Button tool. All material design flaws are documented with specific fixes. The code has not been changed because the scope of this review was the design, not the implementation.
+
+**What the argument improved (5 rounds):**
+1. 15 correctness and security gaps identified and added to the plan (R1): column guards, line ID parsing, value detection, descendant classification, spare SKU normalization, flag gaps, CSV injection, agent SDK, prompt injection, path traversal, translate.py divergence.
+2. 4 plan sharpening items (R3): header text validation vs count, cell_type check, CON-* brittleness, validation extra-group warning.
+3. 4 structural design fixes (R4): validation tri-state, trust boundary clarification, UNKNOWN-DESCENDANT resolution path, R5 validated claim corrected.
+4. 3 final gaps (R5): keep_zero_dollar_lines must be decided, OUT_FIELDS R5 gap, _num() silent coercion.
+
+**Persistent disagreement (Claude's position):**
+- Codex repeatedly flagged "code unchanged" as a blocker. This review was scoped to the design/plan, not the implementation. The gaps are all documented. Implementation is the next step.
+
+**Ready to implement:** The gap register in PLAN.md is the implementation backlog. Recommended order: R5-2 (_num), R1-2/R1-3/R1-4 (ingestion guards), R1-5 (value detection), R1-8 (string normalization), R1-11 (CSV injection), R1-12 (requirements.txt), R1-14/R1-13 (agent path safety), R5-3 (keep_zero_dollar_lines decision), R4-1 (tri-state validation), R1-15 (translate.py removal).
