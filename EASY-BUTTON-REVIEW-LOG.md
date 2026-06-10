@@ -72,3 +72,25 @@ Codex confirmed plan is "materially better as a gap register." New sharpened fin
 
 **Rejected (1, final hold):**
 - **Pricing field comparison conflicts with R5** — Re-raised 3rd time without new evidence. R5 is tested by the keep/swap/drop path preserving the price dict. `_validate` is a SKU-correctness diff against the answer key, not a column audit. Final hold — added explicit rationale to Out of scope.
+
+## Round 4 — Codex (resumed session, read-only)
+VERDICT: REVISE
+
+New findings (not re-raises):
+- Validation WARN still returns `pass: bool` — callers cannot distinguish full pass from partial. Fix: tri-state (`pass`/`partial`/`fail`).
+- "blocks filesystem tools" is misleading — `export_quote` is itself a write primitive. Fix: clarify real trust boundary.
+- UNKNOWN-DESCENDANT has no resolution path — export is blocked until resolved. Fix: allowlist or human-classification gate.
+- Partial accept on pricing: "R5 is validated" claim corrected — `_validate` does NOT verify pricing, this is a known gap.
+
+All engine.py/agent.py/translate.py code findings are re-raises (code unchanged — design review only).
+
+### Claude's response — what changed, what was rejected, why
+
+**Accepted (4):**
+1. **Validation tri-state** — WARN alone still looks like pass to callers. Added `pass`/`partial`/`fail` tri-state; block PASS reporting when any extra group exists.
+2. **Trust boundary wording** — clarified: model cannot pick tool names; within `export_quote`, path must be derived from input, not model-supplied. Removed misleading "blocks filesystem tools."
+3. **UNKNOWN-DESCENDANT resolution path** — added: tool blocks export until every UNKNOWN-DESCENDANT is classified as keep/drop by the rep, OR an allowlist of known non-`CON-*` service prefixes is built from real Cisco exports.
+4. **R5 validated claim corrected** — updated Out of scope to state `_validate` does NOT verify pricing preservation; that is a known gap. Removed false validation claim.
+
+**Rejected (all code re-raises):**
+- All engine.py / agent.py / translate.py findings are re-raises of previously accepted gaps. Code is unchanged because this is a design review, not an implementation PR. No new findings.
