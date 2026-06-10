@@ -1,52 +1,68 @@
-# Plan: Cisco Fulfillment Optimization — Phase 1 Completion
-_Round 0 — initial draft by Claude, against BRD v1.02_
+# Plan: Easy Button — CTO Quote → Stock-Fulfillment Translation
+_Round 0 — design review by Claude_
 
 ## Goal
-Complete the remaining Phase 1 deliverables required for the August 2026 AI Pioneer Program evaluation. The five-agent pipeline (FR-01–FR-12) is built and passing 21 tests. Four external dependencies are still blocking production: Inventory API credentials (D-01), WebQuote extensibility confirmation (D-02), data residency approval (D-04), and Gate 3 ship-complete flag visibility (D-06). This plan covers the four blocking paths and the three remaining deliverables: LiveInventoryClient validation + batch-mode staleness path (Deliverable 1 gap), Pre-WebQuote advisory panel (Deliverable 2), and outcomes monitoring (Deliverable 3), including the `option_selected` recording gap identified in v1.02 as R-06.
+Adversarially review the Easy Button tool, which deterministically converts Cisco CTO quote workbooks (.xls) to orderable stock-fulfillment line sets using a 5-rule engine (R1–R5). The tool is validated against 3 answer-key deals and wraps a Claude Agent SDK layer for orchestration. The core invariant: the engine never invents a SKU — anything outside the rules becomes a FLAG for human review.
 
-## Approach
+## Architecture (what exists)
 
-### Path A — LiveInventoryClient validation (D-01, blocking)
-1. When Jude Mersinger provides `INVENTORY_API_URL` + `INVENTORY_API_KEY`, run `python -m src.pipeline.pipeline --file <real_deal.xlsx> --deal-id <id>` (no `--mock-inventory`) against the live API on a known Deal ID (83737219).
-2. Verify `PipelineInventoryRecord` fields returned: `available_qty`, `spare_list_price`, `spare_sku_discount`. If the API response schema differs, update `LiveInventoryClient.get_inventory()` parsing logic — no other agents change.
-3. **Batch mode branch:** If API is confirmed batch (not real-time), add `is_stale: bool` (default `False` when absent — never `None`) + `data_as_of: Optional[datetime] = None` to `PipelineInventoryResponse`. `inventory_pricer` propagates the staleness flag to each `SPALine` only when `is_stale=True`; `recommendation_writer` adds a `STALE_DATA` flag to the review queue with caveat: *"Inventory data may not reflect current stock — verify before booking."* (BRD R-01 resolution path.)
-4. Add an integration smoke-test: `tests/pipeline/test_live_api.py` — skipped via `@pytest.mark.skipif(not os.environ.get("INVENTORY_API_URL"), reason="Live API not configured")`. Asserts response schema (all three fields present and non-negative), ≤2s per SKU (SC NFR), and that pricing ceiling still holds end-to-end.
-5. **`spare_list_price` / `spare_sku_discount` field validation:** add Pydantic constraints to `PipelineInventoryRecord` in `src/pipeline/models.py`: `spare_list_price: float = Field(default=0.0, ge=0.0)` and `spare_sku_discount: float = Field(default=0.0, ge=0.0, le=1.0)`. Prevents an API returning `discount=1.5` or negative prices from silently producing a negative `spare_net_price` that trivially passes the pricing ceiling.
-6. **Zero-price guard in `inventory_pricer`:** if a non-DNA eligible line has `spare_list_price == 0.0` after the API call, add `STALE_OR_MISSING_PRICE` BLOCK flag to review queue with reason *"Spare SKU price data unavailable — Option B cannot be priced, contact pricing team."* Prevents silent Option B recommendation at $0 due to API misconfiguration.
+### engine.py — deterministic R1–R5 rule engine
+- `read_tables(sheet)`: splits XLS sheet into (original_quote, answer_key) by detecting 2+ empty rows or repeated header. Column offsets are hardcoded (`COL` dict: line=5, sku=7, spare=32, etc.).
+- `translate(lines, keep_zero_dollar_lines)`: groups lines by bundle head (first two dot-segments of line number, e.g. "1.2"), determines keep/swap/drop per bundle:
+  - R1: bundle head ending in `.0` → parent hardware, KEEP, SKU unchanged
+  - R2: service/term descendants in a kept bundle → KEEP unchanged
+  - R3: bundle with no list price > 0 anywhere → DROP (ships in the box)
+  - R4: kept non-parent bundle head → SWAP to spare '=' SKU (col 32) if present
+  - R5: pricing columns preserved on every kept line
+- `translate_workbook(path)`: iterates sheets, calls translate, optionally validates against answer key
+- `_validate(kept, answer_key)`: diffs kept lines against answer key — value-bearing mismatches, missing lines, extra lines all flagged
+- `export_csv(report, out_path)`: writes orderable lines to CSV
 
-### Path B — Pre-WebQuote advisory panel (D-02, blocking)
-7. **WebQuote-native path (if D-02 resolves):** Jude Mersinger + WebQuote team confirm extensibility mechanism. Implement `src/panel/webquote_adapter.py` (Abu Talha: FR-P01–P06 rendering; Harsh Dhabalia: data model + `option_selected` POST endpoint): reads `OUTPUTS/recommendation_{deal_id}.json`, transforms to WebQuote's data model, injects into the Pre-WebQuote panel slot. Panel displays per BRD FR-P01–FR-P07: Option A and Option B cards, review queue badge, plain-language lead times, no Option C. Rep confirms selection → adapter POSTs `option_selected` back (feeds R-06 fix). Load time target ≤5s (SC-04).
-8. **HTML fallback path (if D-02 stays blocked):** `pipeline.py` gains `--html` flag; it calls `recommendation_writer.generate_html(rec)` after normal JSON output. Add `generate_html(rec: PipelineRecommendation) -> str` to `recommendation_writer.py` using stdlib `string.Template`; all user-data fields (deal_id, SKU, descriptions) wrapped in `html.escape()` to prevent invalid HTML. Writes `OUTPUTS/recommendation_{deal_id}.html` — self-contained, CSS-inline, email-safe. Mirrors FR-P01–FR-P06. **No FR-P04 in this path — FR-P04 is "Must have"; HTML fallback formally does not satisfy it (see Risks).**
-9. Both paths: Gate 3 (`ship_complete_flag`) column name confirmed by Harsh Dhabalia (D-06). If confirmed present, remove `gate3_unverifiable` conservative-pass and implement hard gate. If confirmed absent, drop Gate 3 entirely and update confidence logic accordingly.
+### agent.py — Claude Agent SDK wrapper
+- Exposes two MCP tools: `translate_quote`, `export_quote`
+- System prompt hard-locks the model: every SKU must come verbatim from tool output; model cannot invent, correct, or rename SKUs
+- `disallowed_tools` blocks Bash, Write, Edit, WebSearch, WebFetch — model cannot touch filesystem directly
+- `max_turns=6` caps runaway loops
+- Auth via local Claude Code install, no API keys
 
-### Path C — `option_selected` recording / outcomes monitoring (R-06, Deliverable 3)
-10. **WebQuote-native path:** WebQuote adapter (step 7) posts `option_selected` to a new `POST /outcomes/{deal_id}/record` FastAPI endpoint in `src/api/main.py`. Auth: `WEBQUOTE_CALLBACK_KEY` env-var bearer token. Endpoint imports `_OUTCOMES_FILE` and `_OUTCOMES_LOCK` from `src/pipeline/recommendation_writer` and uses the **same `FileLock`** for its append — ensures cross-process mutual exclusion with pipeline runs writing to the same file. Appends delta record only: `{deal_id, option_selected, rep_id, timestamp}`. `option_selected` values: `"A"`, `"B"`, `"DEFERRED"`. Power BI uses `LAST(option_selected) WHERE deal_id = X`.
-11. **HTML fallback path:** `option_selected` remains `null`. Power BI dashboard shows `option_b_available` rate only; override rate computed once WebQuote integration is live.
-12. Power BI dashboard (`FR-M01–FR-M04`): fork of existing POS dashboard. Reads `outcomes.jsonl` via `scripts/export_outcomes_parquet.py` — scheduled nightly (cron or Azure Function trigger), writes `outcomes.parquet` to a path Power BI can mount. Owner: Harsh Dhabalia. Two distinct KPIs: (1) `override_rate` = `option_b_available=true AND option_selected="A"` / `option_b_available=true` lines; (2) `option_b_surface_rate` = `option_b_available=true` / all eligible lines. Reference line at 49.4% on `override_rate` for SC-05 (see population risk in Risks). Alert at rolling 30-day `override_rate` > 50% (FR-M03, could-have). Abu Talha owns UI.
-
-### Path D — Data residency (D-04)
-13. Initiate data residency review with IT/Legal before first production run. Three data points in scope: SPA Excel file content (commercial pricing), inventory API response (includes `spare_list_price`, `spare_sku_discount`), `outcomes.jsonl` content (deal_id, line counts, pricing flags). No data leaves Dart AI Labs POC until approval is in writing. `--keep-checkpoints` in production is guarded: `if os.environ.get("PIPELINE_ENV") == "production" and keep_checkpoints: sys.exit("--keep-checkpoints requires Legal approval in production")` — prevents accidental commercial data retention.
+### translate.py — original standalone validator (reference only)
+- Older, simpler version of the engine — same R1–R5 logic but without flags, structured report, or CSV export
+- Uses `int()` for sort key (fails on float line numbers like "1.10") vs engine.py which uses `float()`
 
 ## Key decisions & tradeoffs
-- **Two panel paths run in parallel:** WebQuote-native and HTML fallback are developed simultaneously (not sequentially) so the August evaluation is not blocked by D-02. WebQuote path is production; HTML path is the evaluation demo fallback.
-- **`option_selected` recording gated on panel path:** In the HTML fallback, option_selected stays null and SC-05 is partially uncomputable. This is explicitly called out in v1.02 as R-06. Decision: accept the null gap for Phase 1 demo; full SC-05 requires WebQuote integration.
-- **Batch mode staleness warning is additive:** If API is batch, only `inventory_pricer` and `recommendation_writer` change (no pipeline restructure). The WARN flag for stale data is surfaced in the review queue alongside pricing WARN/BLOCK flags — same UI pattern, no new component.
-- **Gate 3 removal vs. retention:** If D-06 confirms the column is absent from all SPA versions, Gate 3 is dropped entirely (not conservative-pass). This tightens eligibility — more lines pass — but removes false confidence from `gate3_unverifiable=True` flags. Requires unit test update (SC-02 re-run).
-- **Power BI `outcomes.jsonl` read pattern:** `outcomes.jsonl` is the source of truth. Power BI reads via a scheduled export (nightly parquet or direct JSONL import). No live API connection to `outcomes.jsonl` — batch read is sufficient given daily KPI cadence.
-- **Data residency approval gates production, not POC:** Pipeline continues to run in Dart AI Labs POC during IT/Legal review. No production data is processed. POC uses mock inventory and sanitized fixture files.
+
+1. **Column offsets hardcoded** (`COL` dict). Works for the 3 validated deals. Brittle if Cisco changes the XLS column layout — no header-name lookup, no guard.
+
+2. **Bundle grouping by first two dot-segments** (`".".join(parts[:2])`). Correct for standard Cisco line numbering (x.0, x.N, x.N.M). Untested on non-standard formats (e.g. 3-level parents, alphabetic groups).
+
+3. **`has_value` checks only `list` and `extlist`** — not `net` or `extnet`. A line with `list=0` but `net>0` (fully discounted but still orderable) would be dropped by R3. This may be wrong for deeply discounted deals.
+
+4. **`keep_zero_dollar_lines` flag** — binary switch for tab-3 behavior. No per-bundle granularity. Steff has not confirmed which is canonical.
+
+5. **No deduplication of flags** — the same flag string could appear multiple times if multiple lines in the same bundle lack a spare SKU.
+
+6. **agent.py imports `claude_agent_sdk`** — non-standard package name (standard SDK is `anthropic`). Either a local package or a wrapper — not verifiable without the environment. If it doesn't exist, the agent silently fails with an ImportError.
+
+7. **translate.py sort key uses `int()`** — fails on float line numbers (e.g. "1.10"). engine.py fixes this with `float()`. The old file is kept "for reference" but could cause confusion.
+
+8. **No input validation on the XLS path** — `xlrd.open_workbook(path)` raises a raw exception on bad paths, password-protected files, or .xlsx (xlrd dropped .xlsx support in v2.0). No user-friendly error handling.
+
+9. **`_validate` scope filtering** — `exp_groups` filters kept lines to only the groups appearing in the answer key. Extra kept groups (not in the answer key) are silently ignored in validation. A translation that adds spurious groups passes validation.
+
+10. **CSV export re-runs the engine** — `export_quote` calls `translate_workbook` again rather than caching the result. Deterministic so correct, but wasteful and theoretically inconsistent if the XLS is modified between calls.
 
 ## Risks / open questions
-- **FR-P04 (Must have) not satisfied by HTML fallback:** If the August evaluation uses the HTML fallback path, FR-P04 (rep confirms selected option and passes decision to booking workflow) is formally unmet. This requires explicit acknowledgment from Ann Furtado or Nicko Roussos before the evaluation — not a surprise.
-- **D-01 + D-02 both blocking July milestone:** If neither API credentials nor WebQuote access arrive by mid-July, the panel cannot be tested in WebQuote. HTML fallback keeps the August evaluation alive but SC-04 (panel load time ≤5s) cannot be measured.
-- **Gate 3 decision changes test count:** Dropping Gate 3 from the eligibility engine means Deal IDs with ship-complete lines would have more eligible lines than in current test fixtures. SC-02 test assertions need updating.
-- **SC-05 population mismatch:** The 49.4% baseline covers all Cisco orders (Dec–Jan 2025). `override_rate` from `outcomes.jsonl` covers only orders that went through the pipeline. If the pipeline is not the primary quoting channel from day 1, the populations are incomparable and SC-05 is statistically invalid. Full SC-05 validity requires pipeline adoption as the primary channel — a change management dependency, not just a technical one.
-- **`option_selected` null impacts SC-05:** BRD SC-05 is "stockable drop-ship rate moves measurably below 49.4% within 30 days of production deployment." Without `option_selected` data, this can only be approximated from `option_b_available` rate (supply-side), not from rep choices (demand-side). This is the R-06 risk in v1.02.
-- **Data residency review timeline unknown:** IT/Legal review cadence at TD SYNNEX is undefined. If the review takes >4 weeks, production deployment slips past the August evaluation. POC demo to Ann Furtado and Nicko Roussos may need to run on Dart AI Labs, not production.
+
+- **xlrd .xlsx failure**: xlrd ≥ 2.0 does not support .xlsx. If a user passes an .xlsx file, it raises an opaque `xlrd.biffh.XLRDError`. No guard or user-facing message.
+- **Column layout drift**: If Cisco changes their XLS template, all column offsets silently shift. No header-name validation to catch this.
+- **`net > 0, list = 0` edge case**: Fully discounted but orderable lines dropped by R3 incorrectly.
+- **Agent SDK availability**: `claude_agent_sdk` package must be present. No `requirements.txt` or `pyproject.toml` visible — installation path unclear.
+- **Concurrent use**: No file locking on `/tmp/codex-verdict.txt` or the output CSV — concurrent runs could collide.
+- **Float line sort in translate.py**: The old validator uses `int()` for sort, breaks on lines like "1.10". Should be removed or replaced, not kept as reference.
 
 ## Out of scope
-- Option C / hybrid fulfillment (pending Nicko Roussos sign-off, D-03)
-- Canada SPA data (Phase 2, D-05)
-- Post-CIS order modification
-- Non-Cisco vendor lines
-- Refactoring existing Maple AI FastAPI service
-- Full precision/recall metrics framework (post-pilot)
+- UI / web quote surface (next step per README)
+- CIS inventory API integration (next step per README)
+- Canada / non-U.S. quote formats
+- .xlsx support
+- Multi-user concurrency hardening
