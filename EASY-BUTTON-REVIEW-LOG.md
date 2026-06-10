@@ -50,3 +50,25 @@ Findings:
 Note: Codex explicitly stated it read the stale PLAN.md ("still says Round 0"). User ran `git pull origin main` from home directory `~` rather than `~/grill-me-codex`, so the updated plan was not visible to Codex. All findings are re-raises of Round 1 issues already addressed. No new material findings. No PLAN.md changes made.
 
 VERDICT: REVISE (stale file — findings already resolved in Round 1 revision)
+
+## Round 3 — Codex (resumed session, read-only)
+VERDICT: REVISE
+
+Codex confirmed plan is "materially better as a gap register." New sharpened findings on the plan:
+- `sheet.ncols` count alone still accepts shifted columns silently — needs header text validation at each offset.
+- Requiring text line-number cells doesn't recover Excel-coerced `1.10` → `1.1` — must inspect `cell.ctype` at read time.
+- `CON-*` as only service/term classifier is brittle — unknown descendants should be flagged, not silently kept/dropped.
+- Extra generated groups outside answer-key scope passing silently undermines the validation claim — should WARN.
+- Re-raised: pricing field comparison conflicts with R5 (3rd time, no new evidence).
+- All engine.py/agent.py/translate.py code findings are re-raises (code unchanged — this is a design review, not an implementation PR).
+
+### Claude's response — what changed, what was rejected, why
+
+**Accepted (4 new findings):**
+1. **Header text validation at each offset** — ncols count is insufficient; shifted columns still corrupt. Added requirement to validate expected header text at fixed offsets or resolve by name, fail closed on mismatch.
+2. **`cell.ctype` line ID check** — Excel coercion is irreversible; must detect at read time with `cell.ctype == xlrd.XL_CELL_NUMBER`. Added.
+3. **`CON-*` classifier brittleness** — unknown non-`CON-*` zero-dollar descendants now become UNKNOWN-DESCENDANT flags for human review. Added.
+4. **Validation extra-group warning** — extra groups not in answer key now emit WARN (not hard fail). Added.
+
+**Rejected (1, final hold):**
+- **Pricing field comparison conflicts with R5** — Re-raised 3rd time without new evidence. R5 is tested by the keep/swap/drop path preserving the price dict. `_validate` is a SKU-correctness diff against the answer key, not a column audit. Final hold — added explicit rationale to Out of scope.
