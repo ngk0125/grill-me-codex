@@ -81,7 +81,7 @@ def _require_approved_path(path: str) -> str:
     "decisions (keep/swap/drop/flag with reasons), human-review flags, and "
     "answer-key validation when the sheet contains one. The path must match the "
     "file supplied at startup.",
-    {"path": str, "keep_zero_dollar_lines": bool},
+    {"path": str},
 )
 async def translate_quote(args):
     global _CACHED_REPORT
@@ -89,7 +89,7 @@ async def translate_quote(args):
         path = _require_approved_path(args["path"])
     except ValueError as e:
         return {"content": [{"type": "text", "text": f"error: {e}"}]}
-    report = translate_workbook(path, bool(args.get("keep_zero_dollar_lines", False)))
+    report = translate_workbook(path)
     _CACHED_REPORT = report
     return {"content": [{"type": "text", "text": json.dumps(report, indent=1)}]}
 
@@ -149,7 +149,7 @@ Hard rules:
 - Keep it terse. A salesperson reads this before clicking order."""
 
 
-async def run(quote_path: str, keep_zero: bool) -> int:
+async def run(quote_path: str) -> int:
     global _APPROVED_PATH, _CACHED_REPORT
     _APPROVED_PATH = str(Path(quote_path).expanduser().resolve())
     _CACHED_REPORT = None
@@ -168,7 +168,6 @@ async def run(quote_path: str, keep_zero: bool) -> int:
     prompt = json.dumps({
         "action": "translate_and_export",
         "path": _APPROVED_PATH,
-        "keep_zero_dollar_lines": keep_zero,
     })
     try:
         async with ClaudeSDKClient(options=options) as client:
@@ -199,8 +198,7 @@ def main() -> int:
     if not quote.exists():
         print(f"error: {quote} not found", file=sys.stderr)
         return 2
-    keep_zero = "--keep-zero-dollar-lines" in sys.argv
-    return asyncio.run(run(str(quote.resolve()), keep_zero))
+    return asyncio.run(run(str(quote.resolve())))
 
 
 if __name__ == "__main__":
