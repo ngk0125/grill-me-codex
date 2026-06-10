@@ -53,7 +53,7 @@ _APPROVED_PATH: str = ""
 
 # Cached report produced by translate_quote; export_quote uses this directly
 # so translate and export cannot diverge.
-_CACHED_REPORT: dict | None = None
+_CACHED_REPORT = None  # type: dict | None
 
 
 def _safe_output_path(input_path: str) -> str:
@@ -115,13 +115,10 @@ async def export_quote(args):
                               "text": "error: call translate_quote first"}]}
 
     out = _safe_output_path(path)
-    # Reject symlinks on the output path (lstat — no-follow)
-    try:
-        if Path(out).lstat().is_symlink():
-            return {"content": [{"type": "text",
-                                  "text": "error: output path is a symlink — rejected"}]}
-    except FileNotFoundError:
-        pass  # file doesn't exist yet — fine
+    # Reject symlinks on the output path (is_symlink uses lstat — no-follow)
+    if Path(out).is_symlink():
+        return {"content": [{"type": "text",
+                              "text": "error: output path is a symlink — rejected"}]}
 
     try:
         export_csv(_CACHED_REPORT, out)
