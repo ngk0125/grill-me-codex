@@ -6,3 +6,5 @@ eval_type_backport
 python-dotenv
 pytest
 httpx
+xlrd>=1.2,<2.0
+claude-agent-sdk
