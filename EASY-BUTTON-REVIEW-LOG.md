@@ -42,6 +42,11 @@ Findings:
 14. **`export_quote` arbitrary out_path** — path traversal risk. Added.
 15. **translate.py two sources of truth** — must be removed or delegated. Added.
 
-**Rejected (2 of 17):**
+**Rejected (2 of 17 — final):**
 - **Validation scope to answer-key groups** — intentional design. Extra groups not in the answer key are by definition untested; scoping is the correct behavior for a regression harness. Logged as a known blind spot, not a bug.
 - **Validation checks SKU only (not pricing)** — the answer key validates business correctness of the translation, not column parity. R5 pricing preservation is verified through the keep/swap/drop path, not the validation diff. Over-scope for this component.
+
+## Round 2 — Codex (resumed session, read-only)
+Note: Codex explicitly stated it read the stale PLAN.md ("still says Round 0"). User ran `git pull origin main` from home directory `~` rather than `~/grill-me-codex`, so the updated plan was not visible to Codex. All findings are re-raises of Round 1 issues already addressed. No new material findings. No PLAN.md changes made.
+
+VERDICT: REVISE (stale file — findings already resolved in Round 1 revision)
