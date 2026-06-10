@@ -8,9 +8,14 @@ Agent SDK agent. Division of labor, per Steff's requirements:
   - The agent: runs the tools, explains the result, surfaces flags for
     the human checkpoint, and writes the orderable CSV.
 
-Trust boundary: the model is locked to translate_quote and export_quote.
-export_quote derives its output path from the input path — the model
-cannot supply an arbitrary out_path.
+Trust boundary:
+  - The model is locked to translate_quote and export_quote.
+  - Both tools verify that the supplied path matches the single approved
+    input path captured at startup — any other path is rejected.
+  - export_quote derives its output path from the approved input path;
+    the model cannot supply or override the output path.
+  - The translation report is cached server-side; export_quote exports
+    exactly the cached report so translate and export cannot diverge.
 
 Auth comes from the local Claude Code install (~/.claude). No API keys.
 
@@ -42,64 +47,86 @@ except ImportError as e:
 
 from .engine import export_csv, translate_workbook
 
-_APPROVED_OUTPUT_DIR = None  # set at runtime to the input file's parent
+# Set at startup to the resolved absolute input path.
+# Both tools reject any path that doesn't match.
+_APPROVED_PATH: str = ""
+
+# Cached report produced by translate_quote; export_quote uses this directly
+# so translate and export cannot diverge.
+_CACHED_REPORT: dict | None = None
 
 
 def _safe_output_path(input_path: str) -> str:
-    """Derive a safe output CSV path from the input path."""
     p = Path(input_path).expanduser().resolve()
     return str(p.with_suffix("")) + "_stock_fulfillment.csv"
 
 
-def _validate_output_path(out_path: str, input_path: str) -> str:
-    """Ensure out_path is the expected sibling CSV. Reject anything else."""
-    expected = _safe_output_path(input_path)
-    resolved = str(Path(out_path).expanduser().resolve())
-    if resolved != expected:
+def _require_approved_path(path: str) -> str:
+    resolved = str(Path(path).expanduser().resolve())
+    if not _APPROVED_PATH:
+        raise ValueError("no approved input path registered — internal error")
+    if resolved != _APPROVED_PATH:
         raise ValueError(
-            f"output path '{out_path}' is not the expected sibling CSV "
-            f"'{expected}' — rejected"
+            f"path '{path}' is not the approved input path — rejected"
         )
-    # Reject symlinks
-    if Path(resolved).is_symlink():
-        raise ValueError(f"output path '{resolved}' is a symlink — rejected")
+    if not Path(resolved).exists():
+        raise ValueError(f"file not found: {resolved}")
     return resolved
 
 
 @tool(
     "translate_quote",
-    "Translate a Cisco CTO quote workbook (.xls) to its stock-fulfillment "
+    "Translate the approved Cisco CTO quote workbook (.xls) to its stock-fulfillment "
     "state using the validated deterministic rule set R1-R5. Returns per-line "
     "decisions (keep/swap/drop/flag with reasons), human-review flags, and "
-    "answer-key validation when the sheet contains one.",
+    "answer-key validation when the sheet contains one. The path must match the "
+    "file supplied at startup.",
     {"path": str, "keep_zero_dollar_lines": bool},
 )
 async def translate_quote(args):
-    path = str(Path(args["path"]).expanduser().resolve())
-    if not Path(path).exists():
-        return {"content": [{"type": "text", "text": f"error: file not found: {path}"}]}
+    global _CACHED_REPORT
+    try:
+        path = _require_approved_path(args["path"])
+    except ValueError as e:
+        return {"content": [{"type": "text", "text": f"error: {e}"}]}
     report = translate_workbook(path, bool(args.get("keep_zero_dollar_lines", False)))
+    _CACHED_REPORT = report
     return {"content": [{"type": "text", "text": json.dumps(report, indent=1)}]}
 
 
 @tool(
     "export_quote",
     "Write the kept (orderable) lines of the most recent translation to a "
-    "CSV file the sales team can load. Output path is derived from the input "
-    "path — the model cannot override it.",
-    {"path": str, "keep_zero_dollar_lines": bool},
+    "CSV file the sales team can load. Uses the cached translation — translate "
+    "and export cannot diverge. Output path is derived from the approved input "
+    "path; the model cannot override it. Blocked if any sheet has unresolved "
+    "UNKNOWN-DESCENDANT flags.",
+    {"path": str},
 )
 async def export_quote(args):
-    path = str(Path(args["path"]).expanduser().resolve())
-    if not Path(path).exists():
-        return {"content": [{"type": "text", "text": f"error: file not found: {path}"}]}
-    out = _safe_output_path(path)
-    # Reject symlinks on the output path
-    if Path(out).is_symlink():
+    global _CACHED_REPORT
+    try:
+        path = _require_approved_path(args["path"])
+    except ValueError as e:
+        return {"content": [{"type": "text", "text": f"error: {e}"}]}
+
+    if _CACHED_REPORT is None:
         return {"content": [{"type": "text",
-                              "text": f"error: output path is a symlink — rejected"}]}
-    report = translate_workbook(path, bool(args.get("keep_zero_dollar_lines", False)))
-    export_csv(report, out)
+                              "text": "error: call translate_quote first"}]}
+
+    out = _safe_output_path(path)
+    # Reject symlinks on the output path (lstat — no-follow)
+    try:
+        if Path(out).lstat().is_symlink():
+            return {"content": [{"type": "text",
+                                  "text": "error: output path is a symlink — rejected"}]}
+    except FileNotFoundError:
+        pass  # file doesn't exist yet — fine
+
+    try:
+        export_csv(_CACHED_REPORT, out)
+    except ValueError as e:
+        return {"content": [{"type": "text", "text": f"error: {e}"}]}
     return {"content": [{"type": "text", "text": f"written: {out}"}]}
 
 
@@ -113,8 +140,8 @@ Hard rules:
 - Every SKU you mention MUST come verbatim from translate_quote tool output.
   Never propose, correct, or invent a SKU under any circumstance.
 - Always call translate_quote first, then export_quote.
-- The export_quote tool derives its output path from the input path automatically.
-  Do not attempt to specify or override the output path.
+- Both tools require the same approved file path supplied at startup.
+  Do not attempt to substitute or modify the path.
 - Your report for each deal (sheet) contains exactly:
   1. Line counts: input -> orderable output.
   2. SKU swaps performed (original -> spare '=' SKU).
@@ -126,6 +153,10 @@ Hard rules:
 
 
 async def run(quote_path: str, keep_zero: bool) -> int:
+    global _APPROVED_PATH, _CACHED_REPORT
+    _APPROVED_PATH = str(Path(quote_path).expanduser().resolve())
+    _CACHED_REPORT = None
+
     options = ClaudeAgentOptions(
         mcp_servers={"easy_button": SERVER},
         allowed_tools=[
@@ -137,10 +168,9 @@ async def run(quote_path: str, keep_zero: bool) -> int:
         setting_sources=[],
         max_turns=6,
     )
-    # Pass path as a JSON-encoded value in a structured prompt — not raw interpolation
     prompt = json.dumps({
         "action": "translate_and_export",
-        "path": quote_path,
+        "path": _APPROVED_PATH,
         "keep_zero_dollar_lines": keep_zero,
     })
     try:

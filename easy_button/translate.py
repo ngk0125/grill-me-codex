@@ -38,6 +38,3 @@ def validate(path):
     return all_pass
 
 
-if __name__ == "__main__":
-    import sys
-    sys.exit(0 if validate(sys.argv[1]) else 1)
