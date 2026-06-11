@@ -20,7 +20,11 @@ Trust boundary:
 Auth comes from the local Claude Code install (~/.claude). No API keys.
 
 Usage:
-    python -m easy_button.agent <quote.xls> [--keep-zero-dollar-lines]
+    python -m easy_button.agent <quote.xls>
+
+Zero-dollar bundle handling: drop (ships inside the spare box). This is the
+default engine behavior. The keep alternative is not exposed until Steff
+confirms canonical policy (see PLAN.md Gap R5-3).
 """
 import asyncio
 import json

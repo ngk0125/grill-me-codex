@@ -33,7 +33,9 @@ COL = dict(line=5, sku=7, included=8, qty=9, dur=10, list=14, extlist=15,
            net=16, extnet=17, spare=32, sparelist=33, sparedisc=34)
 
 # Expected header substrings at key columns (case-insensitive).
-# Used to detect shifted workbooks early. Must be confirmed against real Cisco exports.
+# Must be confirmed against real Cisco exports before widening.
+# Current two are the minimum sanity check; all others are validated as
+# non-numeric (any numeric value in row 0 at a COL offset is a hard error).
 _EXPECTED_HEADERS = {COL["line"]: "line", COL["sku"]: "sku"}
 
 OUT_FIELDS = ["line", "action", "sku", "original_sku", "qty", "list", "net",
@@ -44,6 +46,7 @@ _SERVICE_PREFIX = "CON-"
 # Require at least x.N — bare integers have no bundle structure
 _LINE_ID_RE = re.compile(r'^\d+\.\d+(\.\d+)*$')
 _FORMULA_CHARS = frozenset(('=', '+', '-', '@', '\t', '\r'))
+_WHITESPACE = frozenset((' ', '\t', '\r', '\n', '\x0b', '\x0c'))
 _PRICE_COLS = ('list', 'extlist', 'net', 'extnet', 'sparelist', 'sparedisc', 'qty', 'dur')
 
 
@@ -64,7 +67,9 @@ def _strip(v):
 
 def _sanitize_csv(v):
     s = str(v) if v is not None else ''
-    if s and s[0] in _FORMULA_CHARS:
+    # Strip leading whitespace/control chars before checking for formula prefix
+    stripped = s.lstrip(''.join(_WHITESPACE))
+    if stripped and stripped[0] in _FORMULA_CHARS:
         return "'" + s
     return s
 
@@ -80,14 +85,18 @@ def _safe_sort_key(s):
 
 
 def _check_headers(sheet):
-    """Verify expected header substrings at key column offsets in row 0.
+    """Verify header row sanity at all COL offsets in row 0.
 
-    Raises ValueError if row 0 is absent or a key column header does not
-    contain the expected substring (case-insensitive). This catches shifted
-    workbooks before any data row is read.
+    Two checks:
+    1. Columns with known expected substrings must contain them (case-insensitive).
+    2. ALL COL columns must have text/empty headers — any numeric cell in row 0
+       at a COL position indicates a shifted workbook.
+
+    Raises ValueError on any mismatch so the caller fails closed.
     """
     if sheet.nrows < 1:
         raise ValueError(f"Sheet '{sheet.name}': no rows at all — cannot validate headers.")
+    import xlrd as _xlrd
     for col_idx, expected in _EXPECTED_HEADERS.items():
         cell = sheet.cell(0, col_idx)
         header = _strip(cell.value).lower()
@@ -96,6 +105,14 @@ def _check_headers(sheet):
                 f"Sheet '{sheet.name}': expected header containing '{expected}' "
                 f"at column {col_idx}, got '{_strip(cell.value)!r}'. "
                 "Workbook columns may be shifted — re-export and verify layout."
+            )
+    # All referenced columns must have non-numeric headers
+    for name, col_idx in COL.items():
+        cell = sheet.cell(0, col_idx)
+        if cell.ctype == _xlrd.XL_CELL_NUMBER:
+            raise ValueError(
+                f"Sheet '{sheet.name}': column '{name}' at offset {col_idx} "
+                f"has a numeric header value {cell.value!r} — workbook appears shifted."
             )
 
 
@@ -193,6 +210,17 @@ def translate(lines, keep_zero_dollar_lines=False):
 
     valid_lines = [ln for ln in lines if not ln.get('_skip')]
 
+    # Detect duplicate line IDs in the original quote — flag all occurrences
+    seen_ids: dict = {}
+    for ln in valid_lines:
+        seen_ids.setdefault(ln["line"], []).append(ln)
+    duplicate_ids = {lid for lid, lns in seen_ids.items() if len(lns) > 1}
+    for lid in duplicate_ids:
+        flags.append(
+            f"line ID '{lid}' appears {len(seen_ids[lid])} times in quote — "
+            "all occurrences flagged; deduplicate before export"
+        )
+
     bundles = {}
     for ln in valid_lines:
         line_id = ln["line"]
@@ -204,7 +232,8 @@ def translate(lines, keep_zero_dollar_lines=False):
         head_lines = [ln for ln in bl if ln["line"] == head]
 
         missing_head = not is_parent and not head_lines
-        duplicate_head = not is_parent and len(head_lines) > 1
+        # Duplicate head check applies to both parent and non-parent bundles
+        duplicate_head = len(head_lines) > 1
 
         if missing_head:
             flags.append(
@@ -227,11 +256,30 @@ def translate(lines, keep_zero_dollar_lines=False):
 
         for ln in bl:
             line_id = ln["line"]
-            if not _LINE_ID_RE.match(line_id):
-                flags.append(
-                    f"line ID '{line_id}' is not a valid dotted-integer (x.N format required) — "
-                    "row skipped"
+
+            # Duplicate line ID: flag this occurrence
+            if line_id in duplicate_ids:
+                d_dup = dict(
+                    line=line_id, original_sku=ln.get("sku", ""),
+                    sku=ln.get("sku", ""), qty=0, list=0, net=0, extnet=0,
+                    action="flag",
+                    reason=f"DUPLICATE-LINE-ID: '{line_id}' — deduplicate before export",
                 )
+                decisions.append(d_dup)
+                continue
+
+            if not _LINE_ID_RE.match(line_id):
+                msg = (
+                    f"line ID '{line_id}' is not a valid dotted-integer (x.N format required) — "
+                    "flagged; resolve before export"
+                )
+                flags.append(msg)
+                decisions.append(dict(
+                    line=line_id, original_sku=ln.get("sku", ""),
+                    sku=ln.get("sku", ""), qty=0, list=0, net=0, extnet=0,
+                    action="flag",
+                    reason=f"INVALID-LINE-ID: {msg}",
+                ))
                 continue
 
             spare = _strip(ln.get("spare", ""))
@@ -288,10 +336,16 @@ def translate(lines, keep_zero_dollar_lines=False):
                     d.update(action="swap", sku=spare,
                              reason="paid line -> spare '=' SKU (R4)")
                 elif line_id == head and not is_parent:
-                    d.update(action="keep", reason="paid line, no spare SKU on quote")
+                    d.update(
+                        action="flag",
+                        reason=(
+                            "MISSING-SPARE: value-bearing child bundle head has no spare "
+                            "equivalent SKU — confirm orderable from stock before export"
+                        ),
+                    )
                     flags.append(
-                        f"line {line_id} ({ln['sku']}): value-bearing but no "
-                        "spare equivalent — confirm orderable from stock"
+                        f"line {line_id} ({ln['sku']}): MISSING-SPARE — "
+                        "no spare equivalent; human approval required before export"
                     )
                 elif line_id == head and is_parent:
                     d.update(action="keep", reason="parent hardware (R1)")
@@ -414,7 +468,8 @@ def _validate(kept, answer_key):
             if e["sku"] != m["sku"]:
                 issues.append(f"{k}[{i}]: expected {e['sku']}, got {m['sku']}")
         for e in exp_entries[len(my_entries):]:
-            if _num(e.get("list")) > 0 or _num(e.get("extlist")) > 0:
+            if (_num(e.get("list")) > 0 or _num(e.get("extlist")) > 0
+                    or _num(e.get("net")) > 0 or _num(e.get("extnet")) > 0):
                 issues.append(f"{k}: value line {e['sku']} missing from output")
         for m in my_entries[len(exp_entries):]:
             issues.append(f"{k}: extra line {m['sku']} not in answer key")

@@ -83,6 +83,9 @@ class TestSanitizeCsv:
     def test_equals_prefixed(self):
         assert _sanitize_csv("=SUM(A1)").startswith("'")
 
+    def test_space_before_equals_caught(self):
+        assert _sanitize_csv(" =SUM(A1)").startswith("'")
+
     def test_plus_prefixed(self):
         assert _sanitize_csv("+foo").startswith("'")
 
@@ -167,20 +170,37 @@ class TestTranslate:
         assert decisions[0]["action"] == "flag"
         assert "MISSING-HEAD-DESCENDANT" in decisions[0]["reason"]
 
-    def test_duplicate_head_flagged(self):
+    def test_duplicate_line_id_flagged(self):
+        # Duplicate line IDs are caught before bundle processing
         lines = [
             _line("1.1", "CTO-SKU", list_=100, spare="SPARE"),
             _line("1.1", "CTO-SKU-DUP", list_=100, spare="SPARE2"),
         ]
         decisions, flags = translate(lines)
         assert all(d["action"] == "flag" for d in decisions)
-        assert any("DUPLICATE-HEAD" in d["reason"] for d in decisions)
+        assert any("DUPLICATE-LINE-ID" in d["reason"] for d in decisions)
 
-    def test_bare_integer_line_id_skipped(self):
+    def test_duplicate_parent_flagged(self):
+        # Two x.0 parent lines: DUPLICATE-LINE-ID blocks export
+        lines = [
+            _line("1.0", "HW-A"),
+            _line("1.0", "HW-B"),
+        ]
+        decisions, flags = translate(lines)
+        assert all(d["action"] == "flag" for d in decisions)
+
+    def test_bare_integer_line_id_flagged(self):
         lines = [_line("1", "BARE-SKU")]
         decisions, flags = translate(lines)
-        assert len(decisions) == 0
-        assert any("not a valid dotted-integer" in f for f in flags)
+        assert len(decisions) == 1
+        assert decisions[0]["action"] == "flag"
+        assert "INVALID-LINE-ID" in decisions[0]["reason"]
+
+    def test_missing_spare_blocks_export(self):
+        lines = [_line("1.1", "CTO-SKU", list_=100, spare="")]
+        decisions, flags = translate(lines)
+        assert decisions[0]["action"] == "flag"
+        assert "MISSING-SPARE" in decisions[0]["reason"]
 
     def test_net_positive_keeps_bundle(self):
         # list=0 but net>0 — should NOT be dropped by R3
