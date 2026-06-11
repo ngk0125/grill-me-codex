@@ -17,11 +17,14 @@ The engine never invents a SKU. Anything outside the rules raises a flag
 for human review instead of guessing.
 
 Blocking conditions (export refused until resolved):
-  - Any sheet with a read/schema error.
+  - Any sheet with a read/schema error (including >2 data blocks).
   - Any sheet with parse errors (numeric line ID, unparseable pricing).
   - Any line with action="flag": UNKNOWN-DESCENDANT, NEGATIVE-PRICE,
-    MISSING-HEAD-DESCENDANT, DUPLICATE-HEAD.
+    MISSING-HEAD-DESCENDANT, DUPLICATE-HEAD, DUPLICATE-LINE-ID,
+    INVALID-LINE-ID, MISSING-SPARE.
   Line IDs must be x.N or x.N.M... format (bare integers are rejected).
+  The sheet-level gate field is has_blocking_flags (true if ANY decision
+  has action="flag").
 """
 import csv
 import os
@@ -193,6 +196,25 @@ def read_tables(sheet):
 
     if not blocks:
         raise ValueError(f"Sheet '{sheet.name}': no quote table found.")
+
+    def _is_data_block(block):
+        return any(
+            not row.get('_skip') and _LINE_ID_RE.match(row.get("line", ""))
+            for row in block
+        )
+
+    # More than 2 DATA blocks means the sheet structure is ambiguous: the
+    # original quote may have been split by stray blank rows (silent data
+    # loss if we discard the extras). Fail closed rather than guess.
+    # Non-data trailing blocks (footers, notes) are safe to discard.
+    data_blocks = [b for b in blocks if _is_data_block(b)]
+    if len(data_blocks) > 2:
+        raise ValueError(
+            f"Sheet '{sheet.name}': found {len(data_blocks)} blocks containing "
+            "quote-line data — expected at most 2 (quote + answer key). The "
+            "quote may contain stray blank rows splitting it. Fix the sheet "
+            "layout before processing."
+        )
 
     # Validate that a second block looks like an answer key (has valid line IDs)
     # before using it. Footer text / notes after two blank rows would otherwise
@@ -408,7 +430,7 @@ def translate_workbook(path, keep_zero_dollar_lines=False):
                 "deal": "(workbook)", "error": f"cannot open workbook: {e}",
                 "input_lines": 0, "output_lines": 0,
                 "decisions": [], "flags": [str(e)], "validation": None,
-                "has_unknown_descendants": False, "has_parse_errors": False,
+                "has_blocking_flags": False, "has_parse_errors": False,
             }],
         }
 
@@ -422,7 +444,7 @@ def translate_workbook(path, keep_zero_dollar_lines=False):
                 "deal": name, "error": str(e),
                 "input_lines": 0, "output_lines": 0,
                 "decisions": [], "flags": [str(e)], "validation": None,
-                "has_unknown_descendants": False, "has_parse_errors": False,
+                "has_blocking_flags": False, "has_parse_errors": False,
             })
             continue
 
@@ -438,7 +460,7 @@ def translate_workbook(path, keep_zero_dollar_lines=False):
             "decisions": decisions,
             "flags": flags,
             "validation": None,
-            "has_unknown_descendants": has_blocking,
+            "has_blocking_flags": has_blocking,
             "has_parse_errors": has_parse_errors,
         }
         if answer_key:
@@ -506,7 +528,11 @@ def export_csv(report, out_path):
     """
     error_sheets = [s["deal"] for s in report["sheets"] if "error" in s]
     parse_error_sheets = [s["deal"] for s in report["sheets"] if s.get("has_parse_errors")]
-    blocking_sheets = [s["deal"] for s in report["sheets"] if s.get("has_unknown_descendants")]
+    blocking_sheets = [s["deal"] for s in report["sheets"] if s.get("has_blocking_flags")]
+    failed_validation_sheets = [
+        s["deal"] for s in report["sheets"]
+        if (s.get("validation") or {}).get("result") == "fail"
+    ]
 
     problems = []
     if error_sheets:
@@ -515,6 +541,10 @@ def export_csv(report, out_path):
         problems.append(f"sheets with parse errors: {parse_error_sheets}")
     if blocking_sheets:
         problems.append(f"sheets with unresolved blocking flags: {blocking_sheets}")
+    if failed_validation_sheets:
+        problems.append(
+            f"sheets with FAILED answer-key validation: {failed_validation_sheets}"
+        )
     if problems:
         raise ValueError(
             "Export blocked — " + "; ".join(problems) + ". "

@@ -1,5 +1,5 @@
 # Plan: Easy Button — CTO Quote → Stock-Fulfillment Translation
-_Round 9 — updated to reflect all implemented fixes (PRs #15–#19)_
+_Round 10 — local adversarial review round 1 applied_
 
 ## Goal
 The Easy Button deterministically converts Cisco CTO quote workbooks (.xls) to
@@ -24,6 +24,8 @@ A Claude Agent SDK wrapper orchestrates the engine and writes the orderable CSV.
 - Block detection: second block (after 2+ blank rows) is only used as answer key if
   it contains at least one valid dotted-integer line ID. Footers/notes are discarded.
 - Controlled ValueError on no-table-found.
+- More than 2 blocks containing quote-line data → ValueError (split-quote/data-loss guard);
+  non-data trailing blocks (footers/notes) safely discarded.
 
 #### translate(lines)
 - `keep_zero_dollar_lines` removed from CLI and agent API. Engine default (drop) is the
@@ -41,7 +43,7 @@ A Claude Agent SDK wrapper orchestrates the engine and writes the orderable CSV.
 - Non-CON-* zero-dollar descendant in paid bundle → `UNKNOWN-DESCENDANT` `action="flag"`.
 - Missing spare on value-bearing child head → `MISSING-SPARE` `action="flag"`; blocks export.
 - All string fields stripped before use; `spare` field stripped before R4 check.
-- `has_unknown_descendants` covers ALL `action="flag"` lines (all blocking conditions).
+- `has_blocking_flags` covers ALL `action="flag"` lines (all blocking conditions).
 
 #### _validate(kept, answer_key)
 - Tri-state result: `"pass"` / `"partial"` / `"fail"`.
@@ -52,7 +54,7 @@ A Claude Agent SDK wrapper orchestrates the engine and writes the orderable CSV.
 
 #### export_csv(report, out_path)
 - Raises ValueError if ANY sheet has: `"error"` key, `has_parse_errors`, or
-  `has_unknown_descendants` (all blocking flag types).
+  `has_blocking_flags` (all blocking flag types).
 - Atomic write: `tempfile.mkstemp` + `os.replace`; temp cleaned on failure.
 - `_sanitize_csv`: strips leading whitespace before formula-char check (`" =EVIL()"` caught).
 
@@ -85,7 +87,7 @@ A Claude Agent SDK wrapper orchestrates the engine and writes the orderable CSV.
 ## Key decisions & tradeoffs
 
 1. **Blocking-flag pattern**: all conditions that could produce wrong orders are
-   `action="flag"` decisions. `export_csv` checks `has_unknown_descendants` (which
+   `action="flag"` decisions. `export_csv` checks `has_blocking_flags` (which
    covers all flag actions) and refuses to write until every flag is resolved. This
    is conservative — false positives force human review; false negatives could ship
    wrong SKUs.
