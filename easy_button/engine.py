@@ -194,7 +194,19 @@ def read_tables(sheet):
     if not blocks:
         raise ValueError(f"Sheet '{sheet.name}': no quote table found.")
 
-    return blocks[0], (blocks[1] if len(blocks) > 1 else [])
+    # Validate that a second block looks like an answer key (has valid line IDs)
+    # before using it. Footer text / notes after two blank rows would otherwise
+    # be silently promoted to answer-key status and corrupt validation results.
+    answer_key = []
+    if len(blocks) > 1:
+        candidate = blocks[1]
+        valid_rows = [
+            row for row in candidate
+            if not row.get('_skip') and _LINE_ID_RE.match(row.get("line", ""))
+        ]
+        if valid_rows:
+            answer_key = candidate
+    return blocks[0], answer_key
 
 
 def translate(lines, keep_zero_dollar_lines=False):
